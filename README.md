@@ -67,7 +67,7 @@ A lightweight, high-performance macOS Markdown editor.
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/mdnote.git
+git clone https://github.com/Robot-teak/mdnote.git
 cd mdnote
 
 # Install frontend dependencies
