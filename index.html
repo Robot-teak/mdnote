@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MarkFlow</title>
+    <style>
+      /* Inline fallback styles — shows immediately before CSS loads */
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fff; color: #1a1a2e; }
+      #root { display: flex; flex-direction: column; }
+    </style>
+    <!-- Error handler MUST be before any module scripts -->
+    <script>
+      // 白屏调试：最早捕获所有错误并显示在页面上
+      window.addEventListener('error', function(e) {
+        var d = document.createElement('div');
+        d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#fee;color:#c00;padding:12px;font-size:13px;font-family:monospace;white-space:pre-wrap;border-bottom:2px solid #c00;max-height:50vh;overflow:auto;';
+        d.textContent = '[ERROR] ' + e.message + ' at ' + e.filename + ':' + e.lineno + ':' + e.colno;
+        document.body.appendChild(d);
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        var d = document.createElement('div');
+        d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#fee;color:#c00;padding:12px;font-size:13px;font-family:monospace;white-space:pre-wrap;border-bottom:2px solid #c00;max-height:50vh;overflow:auto;';
+        d.textContent = '[UNHANDLED] ' + (e.reason && e.reason.stack ? e.reason.stack : String(e.reason));
+        document.body.appendChild(d);
+      });
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# WorkBuddy (AI assistant internal data)
+.workbuddy/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temporary / scratch files
+team-config.md
+brain/
+
+# Python cache (icon generation scripts)
+__pycache__/
+*.pyc
+
+# AI-generated source images (not needed for build)
+src-tauri/icons/*.png.bak
+src-tauri/icons/macOS_app_icon_for_a_Markdown__*.png
