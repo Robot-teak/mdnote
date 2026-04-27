@@ -6,8 +6,13 @@ if (!rootEl) {
   document.body.innerHTML = '<div style="color:red;padding:20px;font-size:18px;">ERROR: #root element not found!</div>';
 } else {
   try {
-    // 在 root 上先放一个加载指示器
-    rootEl.innerHTML = '<div style="padding:20px;color:#666;">Loading MDnote...</div>';
+    // 在 root 上先放一个居中的加载指示器（图标+文字）
+    rootEl.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;width:100%;background:#fff;">
+        <img src="/icon.png" style="width:80px;height:80px;margin-bottom:16px;opacity:0.85;" alt="MDnote" />
+        <div style="color:#666;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">Loading MDnote...</div>
+      </div>
+    `;
     
     const root = createRoot(rootEl);
     root.render(<App />);

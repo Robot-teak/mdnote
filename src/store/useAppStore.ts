@@ -58,7 +58,7 @@ const initialState = {
   htmlPreview: '',
   isPreviewLoading: false,
   isWelcome: true,
-  autoSaveEnabled: false,
+  autoSaveEnabled: true,
 };
 
 export const useAppStore = create<AppState>((set, get) => ({

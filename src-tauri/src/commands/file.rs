@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 /// Read a file from disk, return its content as String.
 #[tauri::command]
@@ -63,4 +64,27 @@ pub fn get_pending_file() -> Option<String> {
         eprintln!("[MDnote] get_pending_file: PENDING_FILE lock failed");
         None
     }
+}
+
+/// Reveal a file in macOS Finder (select the file in its parent folder)
+#[tauri::command]
+pub fn reveal_in_finder(path: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .args(["-R", path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path; // suppress unused warning
+    }
+    Ok(())
+}
+
+/// Set the window title dynamically
+#[tauri::command]
+pub fn set_window_title(window: tauri::Window, title: String) -> Result<(), String> {
+    window.set_title(&title).map_err(|e| e.to_string())
 }

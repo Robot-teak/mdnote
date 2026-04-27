@@ -3,6 +3,7 @@
 mod commands;
 
 use tauri::{Emitter, Manager, RunEvent};
+use tauri::menu::{Menu, MenuItem};
 use mdnote_lib::PENDING_FILE;
 
 fn main() {
@@ -12,6 +13,41 @@ fn main() {
         .setup(|app| {
             let window = app.get_webview_window("main").expect("no 'main' window found");
             eprintln!("[MDnote] Window URL: {:?}", window.url());
+
+            // ─── 自定义 macOS 菜单 ───
+            // 拦截 About 菜单，让前端打开自定义 About 对话框
+            let about_item = MenuItem::with_id(app, "about", "About MDnote", true, None::<&str>)?;
+            let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
+            let hide = tauri::menu::PredefinedMenuItem::hide(app, None)?;
+            let hide_others = tauri::menu::PredefinedMenuItem::hide_others(app, None)?;
+            let show_all = tauri::menu::PredefinedMenuItem::show_all(app, None)?;
+            let quit = tauri::menu::PredefinedMenuItem::quit(app, None)?;
+
+            let app_name_menu = tauri::menu::Submenu::with_items(
+                app,
+                "MDnote",
+                true,
+                &[
+                    &about_item,
+                    &separator,
+                    &hide,
+                    &hide_others,
+                    &show_all,
+                    &separator,
+                    &quit,
+                ],
+            )?;
+
+            let menu = Menu::with_items(app, &[&app_name_menu])?;
+            app.set_menu(menu)?;
+
+            // 监听 About 菜单点击，emit 事件给前端
+            app.on_menu_event(move |app_handle, event| {
+                if event.id() == "about" {
+                    let _ = app_handle.emit("show-about-dialog", ());
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -23,6 +59,9 @@ fn main() {
             commands::dialog::save_dialog,
             commands::dialog::confirm_close,
             commands::file::get_pending_file,
+            commands::file::reveal_in_finder,
+            commands::file::set_window_title,
+            commands::shell::open_url,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

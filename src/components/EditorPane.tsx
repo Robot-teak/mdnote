@@ -8,7 +8,8 @@ import { languages } from '@codemirror/language-data';
 import { oneDarkTheme } from '@codemirror/theme-one-dark';
 import { useAppStore } from '../store/useAppStore';
 
-import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
+// AutoFill 已禁用 - 如需启用请恢复 closeBrackets 和 closeBracketsKeymap
+// import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 
 interface EditorPaneProps {
   /** Debounced callback when content changes */
@@ -43,14 +44,12 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
       indentOnInput(),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       bracketMatching(),
-      closeBrackets(),
       rectangularSelection(),
       crosshairCursor(),
       highlightActiveLine(),
       highlightSpecialChars(),
       markdown({ base: markdownLanguage, codeLanguages: languages }),
       keymap.of([
-        ...closeBracketsKeymap,
         ...defaultKeymap,
         ...historyKeymap,
         ...foldKeymap,

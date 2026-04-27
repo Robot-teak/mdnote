@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import type { ViewMode } from '../types';
 import { useToast } from './Toast';
@@ -9,13 +9,14 @@ interface ToolbarProps {
   onSaveAs?: () => void | Promise<void>;
   hasFile?: boolean;
   isDirty?: boolean;
+  onAboutOpen?: (open: boolean) => void;
 }
 
 /**
  * Top toolbar with view mode toggle buttons,
  * theme switch, export menu, and save button.
  */
-export default function Toolbar({ onSave, hasFile = false, isDirty = false }: ToolbarProps) {
+export default function Toolbar({ onSave, hasFile = false, isDirty = false, onAboutOpen }: ToolbarProps) {
   const {
     viewMode, setViewMode,
     theme, toggleTheme,
@@ -24,7 +25,44 @@ export default function Toolbar({ onSave, hasFile = false, isDirty = false }: To
   const { showToast } = useToast();
   const { openFile, newDocument } = useFileOps();
 
+  // Export dropdown open state
+  const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setExportDropdownOpen(false);
+      }
+    }
+
+    if (exportDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [exportDropdownOpen]);
+
+  // Close dropdown on Escape key
+  useEffect(() => {
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setExportDropdownOpen(false);
+      }
+    }
+
+    if (exportDropdownOpen) {
+      document.addEventListener('keydown', handleEscape);
+    }
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [exportDropdownOpen]);
+
   const handleExportHTML = useCallback(async () => {
+    setExportDropdownOpen(false);
     try {
       const { exportAsHTML } = await import('../lib/markdown-parser');
       const { content: mdContent } = useAppStore.getState();
@@ -46,6 +84,7 @@ export default function Toolbar({ onSave, hasFile = false, isDirty = false }: To
 
   // 导出 PDF：先生成带打印样式的 HTML，保存为临时文件，用系统浏览器打开让用户打印为 PDF
   const handleExportPDF = useCallback(async () => {
+    setExportDropdownOpen(false);
     try {
       const { exportAsHTML } = await import('../lib/markdown-parser');
       const { invoke } = await import('@tauri-apps/api/core');
@@ -75,11 +114,15 @@ export default function Toolbar({ onSave, hasFile = false, isDirty = false }: To
     }
   }, [showToast]);
 
+  const handleExportToggle = () => {
+    setExportDropdownOpen(!exportDropdownOpen);
+  };
+
   return (
     <header className="toolbar">
       <div className="toolbar-left">
-        {/* App logo / name */}
-        <span className="toolbar-logo">MDnote</span>
+        {/* App logo / name — click to show About */}
+        <span className="toolbar-logo" onClick={() => onAboutOpen?.(true)} title="About MDnote">MDnote</span>
 
         {/* File operations */}
         <div className="toolbar-file-ops" role="group" aria-label="File operations">
@@ -159,19 +202,25 @@ export default function Toolbar({ onSave, hasFile = false, isDirty = false }: To
           {theme === 'dark' ? '☀️' : '🌙'}
         </button>
 
-        {/* Export dropdown */}
-        <div className="toolbar-dropdown">
-          <button className="toolbar-btn" title="Export document">
+        {/* Export dropdown - click to show, click outside to hide */}
+        <div className="toolbar-dropdown" ref={dropdownRef}>
+          <button 
+            className={`toolbar-btn ${exportDropdownOpen ? 'active' : ''}`}
+            onClick={handleExportToggle}
+            title="Export document"
+          >
             ⬇ Export
           </button>
-          <div className="dropdown-menu">
-            <button className="dropdown-item" onClick={handleExportHTML}>
-              📄 Export as HTML (⌘⇧H)
-            </button>
-            <button className="dropdown-item" onClick={handleExportPDF}>
-              🖨 Export as PDF (⌘⇧P)
-            </button>
-          </div>
+          {exportDropdownOpen && (
+            <div className="dropdown-menu">
+              <button className="dropdown-item" onClick={handleExportHTML}>
+                📄 Export as HTML (⌘⇧H)
+              </button>
+              <button className="dropdown-item" onClick={handleExportPDF}>
+                🖨 Export as PDF (⌘⇧P)
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>

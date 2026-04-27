@@ -146,6 +146,13 @@ html, body, #root {
   color: var(--mf-text-primary);
   letter-spacing: -0.3px;
   white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: opacity 0.15s ease;
+}
+
+.toolbar-logo:hover {
+  opacity: 0.7;
 }
 
 /* File operation buttons group */
@@ -218,12 +225,7 @@ html, body, #root {
   position: relative;
 }
 
-.toolbar-dropdown:hover .dropdown-menu {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
-}
-
+/* Dropdown is controlled by React state, always hidden by default */
 .dropdown-menu {
   position: absolute;
   top: calc(100% + 4px);
@@ -233,12 +235,20 @@ html, body, #root {
   border: 1px solid var(--mf-border);
   border-radius: 8px;
   box-shadow: var(--mf-shadow-lg);
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-4px);
-  transition: all 0.15s ease;
   z-index: 100;
   padding: 4px;
+  animation: dropdown-fade-in 0.15s ease;
+}
+
+@keyframes dropdown-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .dropdown-item {
@@ -339,9 +349,9 @@ html, body, #root {
 
 /* ===== TOC Sidebar ===== */
 .toc-sidebar {
-  width: 240px;
-  min-width: 200px;
-  max-width: 320px;
+  width: 264px;  /* 10% increase from 240px */
+  min-width: 220px;
+  max-width: 352px;
   display: flex;
   flex-direction: column;
   background: var(--mf-bg-secondary);
@@ -558,6 +568,38 @@ html, body, #root {
 
 .save-status:empty::after { content: 'Saved'; } /* fallback */
 
+/* File path in status bar */
+.file-path {
+  max-width: 300px;
+  overflow: hidden;
+}
+
+.file-path-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--mf-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+  display: inline-block;
+}
+
+.file-path-btn:hover:not(:disabled) {
+  color: var(--mf-accent);
+  text-decoration: underline;
+}
+
+.file-path-btn:disabled {
+  cursor: default;
+  color: var(--mf-text-muted);
+}
+
 /* ===== Welcome Screen ===== */
 .welcome-screen {
   display: flex;
@@ -576,6 +618,8 @@ html, body, #root {
 .welcome-logo {
   font-size: 56px;
   margin-bottom: 16px;
+  display: flex;
+  justify-content: center;
 }
 
 .welcome-title {
@@ -723,8 +767,9 @@ html, body, #root {
   text-decoration: underline;
 }
 
-.preview-pane strong {
-  font-weight: 600;
+.preview-pane strong,
+.preview-pane b {
+  font-weight: 700;
 }
 
 .preview-pane em {
@@ -1009,4 +1054,194 @@ html, body, #root {
     opacity: 1;
     transform: translateX(0);
   }
+}
+
+/* ===== About Dialog ===== */
+.about-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: aboutFadeIn 0.15s ease;
+}
+
+@keyframes aboutFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.about-dialog {
+  position: relative;
+  background: var(--mf-bg-primary);
+  border-radius: 14px;
+  padding: 36px 40px 28px;
+  width: 360px;
+  text-align: center;
+  box-shadow: var(--mf-shadow-lg);
+  border: 1px solid var(--mf-border);
+}
+
+.about-close {
+  position: absolute;
+  top: 12px; right: 14px;
+  background: none; border: none;
+  font-size: 16px; color: var(--mf-text-muted);
+  cursor: pointer; padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.about-close:hover {
+  background: var(--mf-bg-hover);
+  color: var(--mf-text-primary);
+}
+
+.about-icon {
+  width: 72px; height: 72px;
+  border-radius: 16px;
+  margin-bottom: 12px;
+}
+
+.about-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--mf-text-primary);
+  margin: 0 0 2px;
+}
+
+.about-version {
+  font-size: 13px;
+  color: var(--mf-text-muted);
+  margin: 0 0 14px;
+}
+
+.about-description {
+  font-size: 13px;
+  color: var(--mf-text-secondary);
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+
+.about-tech {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.about-tech span {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--mf-bg-secondary);
+  color: var(--mf-text-secondary);
+  border: 1px solid var(--mf-border);
+}
+
+.about-links {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.about-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border: 1px solid var(--mf-border);
+  border-radius: 6px;
+  background: var(--mf-bg-primary);
+  color: var(--mf-text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.about-link-btn:hover {
+  border-color: var(--mf-accent);
+  background: var(--mf-accent-light);
+}
+
+.about-update {
+  margin-bottom: 14px;
+}
+
+.about-update-btn {
+  padding: 7px 20px;
+  border: 1px solid var(--mf-border);
+  border-radius: 7px;
+  background: var(--mf-bg-secondary);
+  color: var(--mf-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.about-update-btn:hover:not(:disabled) {
+  border-color: var(--mf-accent);
+  background: var(--mf-accent-light);
+}
+
+.about-update-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.about-update-msg {
+  font-size: 12px;
+  color: var(--mf-text-muted);
+  margin: 8px 0 0;
+}
+
+.about-update-msg.has-update {
+  color: var(--mf-success);
+}
+
+.about-goto-update {
+  display: inline;
+  background: none;
+  border: none;
+  color: var(--mf-accent);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  margin-left: 4px;
+  padding: 0;
+}
+
+.about-goto-update:hover {
+  color: var(--mf-accent-hover);
+}
+
+.about-footer {
+  font-size: 11px;
+  color: var(--mf-text-muted);
+  margin: 0;
+}
+
+/* ===== Welcome Screen Footer ===== */
+.welcome-footer {
+  margin-top: 32px;
+  text-align: center;
+}
+
+.welcome-footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--mf-text-muted);
+  font-size: 12px;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.welcome-footer a:hover {
+  color: var(--mf-accent);
 }

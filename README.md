@@ -11,6 +11,9 @@ A lightweight, high-performance macOS Markdown editor.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: macOS](https://img.shields.io/badge/platform-macOS-blue.svg)](https://www.apple.com/macos)
 [![Tauri 2.0](https://img.shields.io/badge/Tauri-2.0-orange.svg)](https://tauri.app)
+[![Latest Release](https://img.shields.io/github/v/release/Robot-teak/mdnote?color=green&sort=semver)](https://github.com/Robot-teak/mdnote/releases/latest)
+
+**[Download v0.2.0](https://github.com/Robot-teak/mdnote/releases/latest)**
 
 </div>
 

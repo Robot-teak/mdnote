@@ -4,6 +4,7 @@ import './styles/globals.css';
 
 // 安全组件
 import WelcomeScreen from './components/WelcomeScreen';
+import AboutDialog from './components/AboutDialog';
 import { ToastProvider, useToast } from './components/Toast';
 import StatusBar from './components/StatusBar';
 
@@ -94,6 +95,22 @@ async function openFileByPath(path: string) {
   }
 }
 
+// ─── 更新窗口标题 ───
+async function updateWindowTitle(filePath: string | null, isDirty: boolean) {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    let title = 'MDnote';
+    if (filePath) {
+      // 提取文件名（只显示文件名，不要后面的 -MDnote）
+      const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'Untitled';
+      title = `${fileName}${isDirty ? ' ●' : ''}`;
+    }
+    await invoke('set_window_title', { title });
+  } catch (err) {
+    console.error('[MDnote] Failed to update window title:', err);
+  }
+}
+
 // ─── AppInner: 所有业务逻辑在这里（在 ToastProvider 内部）───
 
 function AppInner() {
@@ -103,6 +120,7 @@ function AppInner() {
   const filePath = useAppStore((s) => s.filePath);
   const isDirty = useAppStore((s) => s.isDirty);
   const { showToast } = useToast();
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   // 注册全局函数，供 Rust 端 window.eval() 调用
   useEffect(() => {
@@ -111,6 +129,22 @@ function AppInner() {
       openFileByPath(path);
     };
     return () => { delete (window as any).__openFileByPath; };
+  }, []);
+
+  // ─── 监听 macOS 原生 About 菜单事件 ───
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        unlisten = await listen('show-about-dialog', () => {
+          setAboutOpen(true);
+        });
+      } catch (e) {
+        console.warn('[MDnote] Could not listen for show-about-dialog:', e);
+      }
+    })();
+    return () => { unlisten?.(); };
   }, []);
 
   // 所有 hooks 正常调用
@@ -157,13 +191,22 @@ function AppInner() {
           console.warn('[MDnote] Could not set up event listener:', e);
         }
 
-        // 3. 轮询检查（每2秒）—— 作为 emit 事件的兜底
+        // 3. 轮询检查（每2秒，最多10次）—— 作为 emit 事件的兜底
+        let pollCount = 0;
+        const MAX_POLL_COUNT = 10;
         const pollInterval = setInterval(async () => {
           if (!mounted) { clearInterval(pollInterval); return; }
+          pollCount++;
+          if (pollCount > MAX_POLL_COUNT) {
+            console.log('[MDnote] Poll limit reached, stopping polling');
+            clearInterval(pollInterval);
+            return;
+          }
           try {
             const file = await invoke<string | null>('get_pending_file').catch(() => null);
             if (file && mounted) {
               console.log('[MDnote] Poll found pending file:', file);
+              clearInterval(pollInterval); // 找到文件后停止轮询
               openFileByPath(file);
             }
           } catch {}
@@ -204,6 +247,11 @@ function AppInner() {
     return () => { mounted = false; };
   }, []);
 
+  // 监听文件路径和脏状态变化，更新窗口标题
+  useEffect(() => {
+    updateWindowTitle(filePath, isDirty);
+  }, [filePath, isDirty]);
+
   // 智能保存
   const handleSave = useCallback(async () => {
     try {
@@ -237,7 +285,7 @@ function AppInner() {
   return (
     <div className="app-container" data-view-mode={viewMode} data-theme={theme}>
       {/* 工具栏 */}
-      <Toolbar onSave={handleSave} hasFile={!!filePath} isDirty={isDirty} />
+      <Toolbar onSave={handleSave} hasFile={!!filePath} isDirty={isDirty} onAboutOpen={setAboutOpen} />
 
       <div className="main-area">
         {/* TOC 侧栏 */}
@@ -267,6 +315,9 @@ function AppInner() {
       </div>
 
       <StatusBar />
+
+      {/* About Dialog — 从 Toolbar 或 macOS 菜单触发 */}
+      {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
     </div>
   );
 }

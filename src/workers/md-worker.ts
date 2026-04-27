@@ -132,18 +132,61 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#039;');
 }
 
-/** Extract TOC from raw content using regex */
+/** Check if a line is inside a code block (fenced ``` or indented) */
+function isInsideCodeBlock(content: string, lineNum: number): boolean {
+  const lines = content.split('\n');
+  
+  let fencedBlockStart = -1;
+  
+  // 首先找到 lineNum 之前最近的 fenced block 开始/结束位置
+  for (let i = 0; i <= lineNum; i++) {
+    const line = lines[i];
+    const fencedMatch = line.match(/^(```|~~~)/);
+    if (fencedMatch) {
+      if (fencedBlockStart >= 0) {
+        fencedBlockStart = -1;
+      } else {
+        fencedBlockStart = i;
+      }
+    }
+  }
+  
+  if (fencedBlockStart >= 0) {
+    return lineNum > fencedBlockStart;
+  }
+  
+  return false;
+}
+
+/** 去掉标题中的 inline markdown 格式（加粗、斜体、链接等）*/
+function stripInlineMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')   // **加粗** → 加粗
+    .replace(/__(.+?)__/g, '$1')         // __加粗__ → 加粗
+    .replace(/\*(.+?)\*/g, '$1')         // *斜体* → 斜体
+    .replace(/_(.+?)_/g, '$1')           // _斜体_ → 斜体
+    .replace(/~~(.+?)~~/g, '$1')         // ~~删除线~~ → 删除线
+    .replace(/`(.+?)`/g, '$1')           // `行内代码` → 行内代码
+    .replace(/\[(.+?)\]\(.+?\)/g, '$1')  // [链接](url) → 链接
+    .replace(/!\[.*?\]\(.+?\)/g, '')     // ![图片](url) → 空
+    .trim();
+}
+
+/** Extract TOC from raw content, excluding headings inside code blocks */
 function extractTOC(content: string): TocItem[] {
   const lines = content.split('\n');
   const items: TocItem[] = [];
   const HEADING_REGEX = /^(#{1,6})\s+(.+)$/;
 
   for (let lineNum = 0; lineNum < lines.length; lineNum++) {
+    // Skip lines inside code blocks
+    if (isInsideCodeBlock(content, lineNum)) continue;
+
     const match = lines[lineNum].match(HEADING_REGEX);
     if (!match) continue;
 
     const level = match[1].length;
-    const text = match[2].trim();
+    const text = stripInlineMarkdown(match[2].trim());
 
     let position = 0;
     for (let i = 0; i < lineNum; i++) {
