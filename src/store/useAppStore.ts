@@ -26,6 +26,8 @@ interface AppState {
   isWelcome: boolean;
   /** Whether auto-save is enabled (default: false) */
   autoSaveEnabled: boolean;
+  /** Saved scroll position (0-indexed) for PreviewPane scroll restoration */
+  savedScrollTop: number;
 
   // Actions
   setContent: (content: string) => void;
@@ -41,6 +43,7 @@ interface AppState {
   setHtmlPreview: (html: string) => void;
   setIsPreviewLoading: (loading: boolean) => void;
   setAutoSaveEnabled: (enabled: boolean) => void;
+  setSavedScrollTop: (top: number) => void;
 
   /** Reset all state to defaults (new document), and exit welcome mode */
   resetState: () => void;
@@ -59,6 +62,7 @@ const initialState = {
   isPreviewLoading: false,
   isWelcome: true,
   autoSaveEnabled: true,
+  savedScrollTop: 0,
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -95,6 +99,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   setHtmlPreview: (html: string) => set({ htmlPreview: html, isPreviewLoading: false }),
   setIsPreviewLoading: (loading: boolean) => set({ isPreviewLoading: loading }),
   setAutoSaveEnabled: (enabled: boolean) => set({ autoSaveEnabled: enabled }),
+  setSavedScrollTop: (top: number) => set({ savedScrollTop: top }),
 
-  resetState: () => set({ ...initialState, isWelcome: false, viewMode: 'split' }),
+  resetState: () => set((state) => ({
+    ...initialState,
+    theme: state.theme, // ← 保留当前主题，不随 reset 丢失
+    isWelcome: false,
+    viewMode: 'split',
+  })),
 }));

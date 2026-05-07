@@ -316,6 +316,7 @@ html, body, #root {
   padding: 24px 40px;
   overflow-y: auto;
   background: var(--mf-bg-primary);
+  color: var(--mf-text-primary);
   font-size: 15px;
   line-height: 1.75;
   word-wrap: break-word;
@@ -369,6 +370,39 @@ html, body, #root {
   padding: 0 12px;
   border-bottom: 1px solid var(--mf-border);
   flex-shrink: 0;
+  gap: 8px;
+}
+
+/* ===== Find & Replace Panel ===== */
+.find-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+}
+
+.find-tab {
+  flex: 1;
+  height: 28px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--mf-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.find-tab:hover {
+  background: var(--mf-bg-hover);
+  color: var(--mf-text-secondary);
+}
+
+.find-tab.active {
+  background: var(--mf-bg-active);
+  color: var(--mf-text-primary);
 }
 
 .toc-title {
@@ -430,11 +464,16 @@ html, body, #root {
   padding: 4px 8px 4px 12px;
   border-left: 2px solid transparent;
   transition: all 0.12s ease;
+  cursor: pointer;
 }
 
 .toc-item-row:hover {
   background: var(--mf-bg-hover);
   border-left-color: var(--mf-accent);
+}
+
+.toc-item-row:hover .toc-link {
+  color: var(--mf-accent);
 }
 
 /* Indent by level */
@@ -484,11 +523,6 @@ html, body, #root {
   text-overflow: ellipsis;
   white-space: nowrap;
   line-height: 1.6;
-  cursor: pointer;
-}
-
-.toc-link:hover {
-  color: var(--mf-accent);
 }
 
 .toc-children {
@@ -824,6 +858,48 @@ html, body, #root {
   color: var(--mf-text-primary) !important;
 }
 
+/* 暗色模式下 hljs 子元素颜色覆盖 */
+[data-theme='dark'] .preview-pane .hljs-keyword,
+[data-theme='dark'] .preview-pane .hljs-selector-tag,
+[data-theme='dark'] .preview-pane .hljs-literal,
+[data-theme='dark'] .preview-pane .hljs-section,
+[data-theme='dark'] .preview-pane .hljs-link {
+  color: #ff7b72 !important;
+}
+
+[data-theme='dark'] .preview-pane .hljs-string,
+[data-theme='dark'] .preview-pane .hljs-regexp,
+[data-theme='dark'] .preview-pane .hljs-addition {
+  color: #a5d6ff !important;
+}
+
+[data-theme='dark'] .preview-pane .hljs-title,
+[data-theme='dark'] .preview-pane .hljs-name,
+[data-theme='dark'] .preview-pane .hljs-attr {
+  color: #d2a8ff !important;
+}
+
+[data-theme='dark'] .preview-pane .hljs-variable,
+[data-theme='dark'] .preview-pane .hljs-template-variable {
+  color: #ffa657 !important;
+}
+
+[data-theme='dark'] .preview-pane .hljs-comment,
+[data-theme='dark'] .preview-pane .hljs-quote,
+[data-theme='dark'] .preview-pane .hljs-deletion {
+  color: #8b949e !important;
+}
+
+[data-theme='dark'] .preview-pane .hljs-number,
+[data-theme='dark'] .preview-pane .hljs-built_in,
+[data-theme='dark'] .preview-pane .hljs-type {
+  color: #79c0ff !important;
+}
+
+[data-theme='dark'] .preview-pane .hljs-meta {
+  color: #ffa657 !important;
+}
+
 .preview-pane blockquote {
   margin: 0 0 1em;
   padding: 0.5em 1em;
@@ -917,6 +993,176 @@ html, body, #root {
   scrollbar-color: var(--mf-scrollbar-thumb) var(--mf-scrollbar-track);
 }
 
+/* ===== Find & Replace Panel ===== */
+.find-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.find-input-group {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.find-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--mf-bg-primary);
+  border: 1px solid var(--mf-border);
+  border-radius: 6px;
+  padding: 0 8px;
+  transition: border-color 0.12s ease;
+}
+
+.find-input-row:focus-within {
+  border-color: var(--mf-accent);
+}
+
+.find-input-icon {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--mf-text-muted);
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.find-input {
+  flex: 1;
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--mf-text-primary);
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+}
+
+.find-input::placeholder {
+  color: var(--mf-text-muted);
+}
+
+.find-actions {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px 8px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.find-btn {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--mf-border);
+  border-radius: 4px;
+  background: var(--mf-bg-primary);
+  color: var(--mf-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.find-btn:hover:not(:disabled) {
+  background: var(--mf-bg-hover);
+  color: var(--mf-text-primary);
+}
+
+.find-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.find-btn-primary {
+  background: var(--mf-accent);
+  color: white;
+  border-color: var(--mf-accent);
+}
+
+.find-btn-primary:hover:not(:disabled) {
+  background: var(--mf-accent-hover);
+  color: white;
+}
+
+.find-btn-accent {
+  border-color: var(--mf-accent);
+  color: var(--mf-accent);
+}
+
+.find-btn-accent:hover:not(:disabled) {
+  background: var(--mf-accent-light);
+}
+
+.find-result-count {
+  padding: 0 12px 6px;
+  font-size: 11px;
+  color: var(--mf-text-muted);
+  flex-shrink: 0;
+}
+
+.find-result-list {
+  flex: 1;
+  overflow-y: auto;
+  border-top: 1px solid var(--mf-border);
+}
+
+.find-result-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: none;
+  border-bottom: 1px solid var(--mf-bg-tertiary);
+  background: none;
+  color: var(--mf-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s ease;
+  width: 100%;
+}
+
+.find-result-item:hover {
+  background: var(--mf-bg-hover);
+}
+
+.find-result-item.active {
+  background: var(--mf-accent-light);
+  color: var(--mf-text-primary);
+}
+
+.find-result-line {
+  font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+  font-size: 11px;
+  color: var(--mf-text-muted);
+  flex-shrink: 0;
+  min-width: 28px;
+}
+
+.find-result-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.find-highlight {
+  background: rgba(3, 102, 214, 0.2);
+  color: var(--mf-text-primary);
+  padding: 0 1px;
+  border-radius: 2px;
+}
+
+[data-theme='dark'] .find-highlight {
+  background: rgba(88, 166, 255, 0.25);
+}
+
 /* ===== Print Styles (PDF Export) ===== */
 @media print {
   .toolbar,
@@ -955,6 +1201,15 @@ html, body, #root {
 /* Disable transitions on load */
 .no-transition * {
   transition: none !important;
+}
+
+/* F1: 编辑→预览同步滚动高亮效果 */
+.sync-highlight {
+  animation: sync-flash 300ms ease;
+}
+@keyframes sync-flash {
+  0% { background-color: rgba(3, 102, 214, 0.15); }
+  100% { background-color: transparent; }
 }
 
 /* ===== Selection ===== */

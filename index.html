@@ -1,15 +1,24 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MDnote</title>
+    <script>
+      // 最早设置主题，避免暗色模式下出现白色闪烁
+      (function() {
+        var t = localStorage.getItem('mdnote-theme') || 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
     <style>
       /* Inline fallback styles — shows immediately before CSS loads */
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body, #root { width: 100%; height: 100%; overflow: hidden; }
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fff; color: #1a1a2e; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--mf-bg-primary, #fff); color: var(--mf-text-primary, #1a1a2e); }
       #root { display: flex; flex-direction: column; }
+      /* 暗色模式兜底（CSS变量还没加载时） */
+      [data-theme='dark'] body { background: #1e1e1e; color: #d4d4d4; }
     </style>
     <!-- Error handler MUST be before any module scripts -->
     <script>

@@ -6,10 +6,17 @@ import { useToast as useToastComp } from '../components/Toast';
 
 /**
  * File operation hooks: open, new, save-as, and preview rendering.
- * 
+ *
  * NOTE: @tauri-apps/api uses dynamic import() to avoid top-level initialization
  * that causes white-screen issues in Tauri 2 WKWebView.
  */
+
+/** 判断当前窗口是否有内容，决定是复用窗口还是开新窗口 */
+function shouldOpenNewWindow(): boolean {
+  const state = useAppStore.getState();
+  return !state.isWelcome && (state.filePath !== null || state.content.length > 0);
+}
+
 export function useFileOps() {
   const { showToast } = useToastComp();
   const {
@@ -24,14 +31,22 @@ export function useFileOps() {
 
   /**
    * Open a file: show system dialog, read via Rust IPC, populate editor + preview.
+   * F2: 如果当前窗口有内容，在新窗口中打开文件。
    */
   const openFile = useCallback(async () => {
     try {
       // 动态 import Tauri API
       const { invoke } = await import('@tauri-apps/api/core');
-      
+
       const path = await invoke<string | null>('open_dialog');
       if (!path) return; // User cancelled
+
+      // F2: 当前窗口有内容 → 在新窗口打开
+      if (shouldOpenNewWindow()) {
+        const theme = useAppStore.getState().theme;
+        await invoke('open_file_in_new_window', { path, theme });
+        return;
+      }
 
       setIsPreviewLoading(true);
       const fileContent = await invoke<string>('read_file', { path });
@@ -59,9 +74,19 @@ export function useFileOps() {
 
   /**
    * Create new blank document.
-   * resetState sets isWelcome=false, so the editor will show.
+   * F2: 如果当前窗口有内容，开新窗口；否则复用当前窗口。
    */
-  const newDocument = useCallback(() => {
+  const newDocument = useCallback(async () => {
+    if (shouldOpenNewWindow()) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const theme = useAppStore.getState().theme;
+        await invoke('create_new_window', { theme });
+      } catch (err) {
+        console.error('[MDnote] Failed to create new window:', err);
+      }
+      return;
+    }
     resetState();
     setHtmlPreview('');
     setTocItems([]);
@@ -117,6 +142,7 @@ export function useFileOps() {
   /**
    * Render preview and TOC from current content.
    * Called by the EditorPane's onContentChange callback (debounced externally).
+   * 修复问题3：setHtmlPreview 后通过 requestAnimationFrame 恢复滚动位置。
    */
   const updatePreview = useCallback(
     async (markdownContent: string) => {
@@ -133,6 +159,15 @@ export function useFileOps() {
           extractTocFromWorker(markdownContent),
         ]);
         setHtmlPreview(html);
+        // 修复问题3：等 React 渲染完成（下一帧）后恢复滚动位置
+        // 此时 .preview-pane 的 innerHTML 已是新内容，savedScrollTop 恢复正确
+        const savedScroll = useAppStore.getState().savedScrollTop;
+        if (savedScroll > 0) {
+          requestAnimationFrame(() => {
+            const el = document.querySelector('.preview-pane');
+            if (el) el.scrollTop = savedScroll;
+          });
+        }
         setTocItems(toc);
       } catch (err) {
         showToast('Failed to render preview', 'error');

@@ -62,6 +62,10 @@ class AppErrorBoundary extends React.Component<
 
 // ─── 通过文件路径打开文件的公共方法 ───
 
+// Bug 1 修复：去重机制，防止同一文件在短时间内被重复打开
+let lastOpenFilePath = '';
+let lastOpenFileTime = 0;
+
 async function openFileByPath(path: string) {
   try {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -74,10 +78,32 @@ async function openFileByPath(path: string) {
     cleanPath = cleanPath.replace(/^\/+/, '/');
     // Tauri event payload 可能带引号
     cleanPath = cleanPath.replace(/^"|"$/g, '');
+
+    // Bug 1 修复：2秒内同一路径的去重
+    const now = Date.now();
+    if (cleanPath === lastOpenFilePath && now - lastOpenFileTime < 2000) {
+      console.log('[MDnote] Skipping duplicate file open:', cleanPath);
+      // 清除 pending file 防止轮询再次触发
+      invoke('get_pending_file').catch(() => {});
+      return;
+    }
+    lastOpenFilePath = cleanPath;
+    lastOpenFileTime = now;
+
     console.log('[MDnote] Opening file from path:', cleanPath);
+
+    // F2 fix: 如果当前窗口有内容，在新窗口中打开文件
+    const { useAppStore: store } = await import('./store/useAppStore');
+    const state = store.getState();
+    const hasContent = !state.isWelcome && (state.filePath !== null || state.content.length > 0);
+    if (hasContent) {
+      const theme = state.theme;
+      await invoke('open_file_in_new_window', { path: cleanPath, theme });
+      return;
+    }
+
     const fileContent = await invoke<string>('read_file', { path: cleanPath });
     const { renderMarkdown, extractTocFromWorker } = await import('./lib/markdown-parser');
-    const { useAppStore: store } = await import('./store/useAppStore');
 
     store.getState().setFilePath(cleanPath);
     store.getState().setContent(fileContent);
@@ -131,6 +157,21 @@ function AppInner() {
     return () => { delete (window as any).__openFileByPath; };
   }, []);
 
+  // ─── F2: 新窗口 URL 参数处理 ───
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const filePath = params.get('file');
+    const themeParam = params.get('theme');
+    if (themeParam === 'dark' || themeParam === 'light') {
+      useAppStore.getState().setTheme(themeParam);
+    }
+    if (filePath) {
+      const cleanPath = decodeURIComponent(filePath);
+      console.log('[MDnote] Opening file from URL param:', cleanPath);
+      openFileByPath(cleanPath);
+    }
+  }, []);
+
   // ─── 监听 macOS 原生 About 菜单事件 ───
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -173,17 +214,25 @@ function AppInner() {
         // 2. 注册 emit 事件监听（应用已在运行时，再打开新文件）
         try {
           const tauri = (window as any).__TAURI__;
+
+          // Bug 1 修复：事件处理后立即清除 PENDING_FILE，防止轮询重复触发
           if (tauri?.event?.listen) {
             await tauri.event.listen('open-file-path', (event: any) => {
               if (!mounted) return;
               const payload = event.payload;
               console.log('[MDnote] Received open-file-path event:', payload);
-              if (payload) openFileByPath(String(payload));
+              if (payload) {
+                // 立即清除 pending file，防止轮询再取到同一个路径
+                invoke('get_pending_file').catch(() => {});
+                openFileByPath(String(payload));
+              }
             });
           } else {
             const { listen } = await import('@tauri-apps/api/event');
             await listen<string>('open-file-path', (event) => {
               if (!mounted) return;
+              // 立即清除 pending file，防止轮询再取到同一个路径
+              invoke('get_pending_file').catch(() => {});
               if (event.payload) openFileByPath(event.payload);
             });
           }
@@ -271,6 +320,11 @@ function AppInner() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleContentChange = useCallback((newContent: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    // 修复问题3：在防抖开始时保存预览区滚动位置（此时 DOM 仍为旧内容，scrollTop 是正确的）
+    const scrollEl = document.querySelector('.preview-pane');
+    const currentScrollTop = scrollEl ? scrollEl.scrollTop : 0;
+    const { setSavedScrollTop } = useAppStore.getState();
+    setSavedScrollTop(currentScrollTop);
     debounceRef.current = setTimeout(() => {
       updatePreview(newContent);
     }, 150);

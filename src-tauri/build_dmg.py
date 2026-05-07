@@ -18,7 +18,7 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 
 APP_NAME = "MDnote"
 BUNDLE_ID = "com.mdnote.desktop"
-VERSION = "0.2.0"
+VERSION = "0.3.4"
 
 ARCHS = [
     ("aarch64-apple-darwin", "arm64", "Apple Silicon"),

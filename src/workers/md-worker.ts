@@ -93,18 +93,19 @@ md.core.ruler.push('task_list', (state) => {
   }
 });
 
-// Bug2 修复：给 heading 标签添加 data-source-line 属性
-// 用于 TOC 点击时精确跳转到对应 heading
+// F1: 给所有块级开标签添加 data-source-line 属性
+// 用于编辑→预览同步滚动精确定位
 md.core.ruler.push('source_line_attr', (state) => {
   const tokens = state.tokens;
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
-    if (token.type === 'heading_open') {
-      // token.map[0] 是源码行号（0-indexed）
-      const line = token.map?.[0];
-      if (typeof line === 'number') {
-        token.attrSet('data-source-line', String(line));
-      }
+    // 为所有有 map（源码位置信息）的块级开标签添加 data-source-line
+    if (
+      token.map &&
+      typeof token.map[0] === 'number' &&
+      (token.nesting === 1 || token.type.endsWith('_open'))
+    ) {
+      token.attrSet('data-source-line', String(token.map[0]));
     }
   }
 });

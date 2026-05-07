@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-05-06
+
+### Added
+- **Multi-Window Support**: Open multiple documents in separate windows
+  - New/Open intelligently routes to a new window when current window has content
+  - New windows inherit parent window size and position (offset by 30px)
+  - Each window has fully independent state
+  - URL parameter support for passing file path to new windows
+- **Interaction Optimization**: Improved editor-preview interaction experience
+- **Find & Replace**: Full find and replace functionality in the sidebar
+  - "Outline" | "Find" tab switching in the sidebar panel
+  - Search input with Enter to find, Shift+Enter to find previous
+  - Next/Previous navigation through matches
+  - Replace single match and Replace All operations
+  - Match count display ("N matches found")
+  - Result list with line numbers and context snippets (virtual scroll, max 200 items)
+  - `Cmd+F` shortcut to open Find panel and focus search input
+  - Match highlighting in the editor via CM6 search integration
+  - Replace UI automatically hidden in preview-only mode
+
+### Fixed
+- Fixed known bugs
+
+### Changed
+- **Markdown Worker**: `data-source-line` attributes now applied to all block-level elements (paragraphs, lists, blockquotes, tables, code blocks, etc.), not just headings
+- **Sidebar**: Restructured with tab navigation (Outline / Find)
+- **Capabilities**: Window permissions changed from `["main"]` to `["*"]` to support multi-window
+
+---
+
 ## [0.2.0] - 2026-04-27
 
 ### Added
@@ -22,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **App Icon**: New refined icon design
 - **Window Title Format**: Simplified to show only filename (no "— MDnote" suffix)
 - **Auto-save Default**: Auto-save now enabled by default for new documents
+- **Auto-save Interval**: Changed from 3-second debounce to 60-second interval (polling-based, only saves when dirty)
 - **Status Bar**: Simplified — removed theme/view mode indicators, auto-save toggle moved right
 - **TOC Sidebar**: Width increased from 240px to 264px for better readability
 - **Export Dropdown**: Changed from hover-to-show to click-to-show with outside-click dismiss
@@ -44,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Three view modes: Editor Only, Split View, Preview Only
 - Table of Contents sidebar with hierarchical navigation
 - Light/Dark theme support with instant switching
-- Auto-save functionality (3-second debounce)
+- Auto-save functionality (60-second interval, polling-based)
 - File association support for .md files
 - Keyboard shortcuts for all major functions
 - HTML and PDF export capabilities

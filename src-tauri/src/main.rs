@@ -61,6 +61,8 @@ fn main() {
             commands::file::get_pending_file,
             commands::file::reveal_in_finder,
             commands::file::set_window_title,
+            commands::file::create_new_window,
+            commands::file::open_file_in_new_window,
             commands::shell::open_url,
         ])
         .build(tauri::generate_context!())

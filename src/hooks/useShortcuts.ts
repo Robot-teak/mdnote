@@ -82,6 +82,13 @@ export function useShortcuts({ onSave }: { onSave: () => void }) {
         toggleTOC();
         return;
       }
+
+      // F3: ⌘F → 打开查找面板
+      if (meta && !shift && key === 'f') {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('app:toggle-find'));
+        return;
+      }
     },
     [setViewMode, toggleTheme, toggleTOC, onSave],
   );
