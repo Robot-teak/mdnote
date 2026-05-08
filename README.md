@@ -33,20 +33,6 @@ A lightweight, high-performance macOS Markdown editor.
 - 📄 **Export** — HTML (inline styles) / PDF
 - 🪶 **Lightweight** — <10MB bundle, <1s startup
 
-## 功能特性
-
-- 📝 **专业编辑** — CodeMirror 6，支持 Markdown 语法高亮、行号、括号匹配、自动缩进
-- 👁️ **实时预览** — markdown-it 渲染 + highlight.js 代码块高亮
-- 🔀 **三种视图** — 仅编辑 / 分栏 / 仅预览，一键切换
-- 🌳 **目录大纲** — 自动提取标题，层级树形导航
-- 🎨 **亮色/暗色主题** — CSS Variables 实现，一键切换
-- 💾 **自动保存** — 3 秒防抖自动保存
-- 📂 **文件关联** — Finder 中直接"打开方式"打开 .md 文件
-- ⌨️ **快捷键** — 完整快捷键覆盖
-- 🚀 **高性能** — Web Worker 解析、虚拟滚动、输入延迟 <30ms
-- 📄 **导出** — HTML（内联样式）/ PDF
-- 🪶 **轻量** — 安装包 <10MB，启动 <1s
-
 ## Tech Stack
 
 | Layer | Technology |
