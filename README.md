@@ -6,8 +6,6 @@ A lightweight, high-performance macOS Markdown editor.
 
 **Lightweight · Fast · Native**
 
-[English](#features) | [中文](#功能特性)
-
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: macOS](https://img.shields.io/badge/platform-macOS-blue.svg)](https://www.apple.com/macos)
 [![Tauri 2.0](https://img.shields.io/badge/Tauri-2.0-orange.svg)](https://tauri.app)
