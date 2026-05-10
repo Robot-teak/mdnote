@@ -118,40 +118,6 @@ export default function FindReplace() {
     setHasSearched(true);
   }, [searchText, viewMode, performPreviewSearch]);
 
-  // 输入框 Enter 键
-  const onSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (e.shiftKey) {
-        if (viewMode === 'preview') {
-          // Bug 3: 预览模式 Prev
-          findPrevPreview();
-        } else {
-          window.dispatchEvent(new CustomEvent('editor:find-prev'));
-        }
-      } else if (hasSearched) {
-        if (viewMode === 'preview') {
-          findNextPreview();
-        } else {
-          window.dispatchEvent(new CustomEvent('editor:find-next'));
-        }
-      } else {
-        doSearch();
-      }
-    }
-  }, [hasSearched, doSearch, viewMode]);
-
-  const onReplaceKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      doReplace();
-    }
-    if (e.key === 'Enter' && e.shiftKey) {
-      e.preventDefault();
-      window.dispatchEvent(new CustomEvent('editor:find-prev'));
-    }
-  }, []);
-
   // Bug 3: 预览模式查找下一个
   const findNextPreview = useCallback(() => {
     if (results.length === 0) return;
@@ -202,6 +168,40 @@ export default function FindReplace() {
     }));
   }, [isEditable, searchText, replaceText]);
 
+  // 输入框 Enter 键
+  const onSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        if (viewMode === 'preview') {
+          findPrevPreview();
+        } else {
+          window.dispatchEvent(new CustomEvent('editor:find-prev'));
+        }
+      } else if (hasSearched) {
+        if (viewMode === 'preview') {
+          findNextPreview();
+        } else {
+          window.dispatchEvent(new CustomEvent('editor:find-next'));
+        }
+      } else {
+        doSearch();
+      }
+    }
+  }, [hasSearched, doSearch, viewMode, findNextPreview, findPrevPreview]);
+
+  // 修复 onReplaceKeyDown 的闭包过期问题：添加 doReplace 作为依赖
+  const onReplaceKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      doReplace();
+    }
+    if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault();
+      window.dispatchEvent(new CustomEvent('editor:find-prev'));
+    }
+  }, [doReplace]);
+
   // 监听编辑器返回的搜索结果
   useEffect(() => {
     const handler = (e: Event) => {
@@ -239,13 +239,29 @@ export default function FindReplace() {
     setTimeout(() => searchInputRef.current?.focus(), 50);
   }, []);
 
-  // 虚拟滚动参数
+  // Bug 9 修复：使用 ResizeObserver 动态测量容器高度，让列表根据窗口自适应
+  const [containerHeight, setContainerHeight] = useState(200);
+
+  useEffect(() => {
+    const el = listContainerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const height = entry.contentRect.height;
+        if (height > 0) {
+          setContainerHeight(height);
+        }
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [results.length > 0]); // 重新观察当列表出现/消失时
+
+  // 虚拟滚动参数（基于动态容器高度）
   const [scrollTop, setScrollTop] = useState(0);
   const totalHeight = results.length * ITEM_HEIGHT;
-  const visibleCount = Math.min(results.length, 200);
-  const containerHeight = Math.min(visibleCount * ITEM_HEIGHT, 320);
+  const endIndex = Math.min(results.length, Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + BUFFER_SIZE);
   const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - BUFFER_SIZE);
-  const endIndex = Math.min(visibleCount, Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + BUFFER_SIZE);
 
   const visibleItems = useMemo(() =>
     results.slice(startIndex, endIndex).map((item, i) => ({
@@ -324,12 +340,11 @@ export default function FindReplace() {
         </div>
       )}
 
-      {/* 结果列表（虚拟滚动） */}
+      {/* Bug 9 修复：结果列表使用 flex:1 自适应窗口高度，不再固定高度 */}
       {results.length > 0 && (
         <div
           className="find-result-list"
           ref={listContainerRef}
-          style={{ height: containerHeight }}
           onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
         >
           <div style={{ height: totalHeight, position: 'relative' }}>

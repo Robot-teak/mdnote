@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-const CURRENT_VERSION = '0.3.4';
+const CURRENT_VERSION = '0.3.7';
 const GITHUB_REPO = 'https://github.com/Robot-teak/mdnote';
 const GITHUB_AUTHOR = 'https://github.com/Robot-teak';
 const GITHUB_RELEASES_API = 'https://api.github.com/repos/Robot-teak/mdnote/releases/latest';

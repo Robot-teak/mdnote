@@ -90,6 +90,20 @@ pub fn set_window_title(window: tauri::Window, title: String) -> Result<(), Stri
     window.set_title(&title).map_err(|e| e.to_string())
 }
 
+/// Read text from the system clipboard (for paste operations without permission dialog)
+#[tauri::command]
+pub fn read_clipboard() -> Result<String, String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    clipboard.get_text().map_err(|e| e.to_string())
+}
+
+/// Write text to the system clipboard
+#[tauri::command]
+pub fn write_clipboard(text: String) -> Result<(), String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    clipboard.set_text(&text).map_err(|e| e.to_string())
+}
+
 /// Simple URL encoding (no extra dependency needed)
 fn simple_url_encode(s: &str) -> String {
     let mut result = String::with_capacity(s.len() * 2);
@@ -114,7 +128,6 @@ pub async fn create_new_window(app: AppHandle, window: tauri::Window, theme: Opt
     let pos = window
         .outer_position()
         .map_err(|e| e.to_string())?;
-    let size = window.outer_size().map_err(|e| e.to_string())?;
 
     let label = format!(
         "doc-{}",
@@ -131,9 +144,10 @@ pub async fn create_new_window(app: AppHandle, window: tauri::Window, theme: Opt
         "index.html".to_string()
     };
 
+    // Bug 8 修复：新窗口使用合理的固定大小，而非复制当前窗口大小（可能接近全屏）
     WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
         .title("MDnote")
-        .inner_size(size.width as f64, size.height as f64)
+        .inner_size(1100.0, 750.0)
         .position(pos.x as f64 + 30.0, pos.y as f64 + 30.0)
         .min_inner_size(900.0, 600.0)
         .decorations(true)
@@ -149,7 +163,6 @@ pub async fn open_file_in_new_window(app: AppHandle, window: tauri::Window, path
     let pos = window
         .outer_position()
         .map_err(|e| e.to_string())?;
-    let size = window.outer_size().map_err(|e| e.to_string())?;
 
     let label = format!(
         "doc-{}",
@@ -167,9 +180,10 @@ pub async fn open_file_in_new_window(app: AppHandle, window: tauri::Window, path
         format!("index.html?file={}", encoded_path)
     };
 
+    // Bug 8 修复：新窗口使用合理的固定大小
     WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
         .title("MDnote")
-        .inner_size(size.width as f64, size.height as f64)
+        .inner_size(1100.0, 750.0)
         .position(pos.x as f64 + 30.0, pos.y as f64 + 30.0)
         .min_inner_size(900.0, 600.0)
         .decorations(true)

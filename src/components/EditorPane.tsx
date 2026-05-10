@@ -66,13 +66,20 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
         indentWithTab,
       ]),
       keymap.of([
-        // B3 修复：显式注册剪贴板和全选快捷键（macOS WebView 兜底）
+        // Bug 6 修复：剪贴板快捷键改用 Tauri IPC 读取剪贴板，避免 macOS 权限弹窗
         { key: 'Mod-a', run: selectAll },
         { key: 'Mod-x', run: (view: EditorView) => {
           const { from, to } = view.state.selection.main;
           if (from === to) return false;
           const text = view.state.sliceDoc(from, to);
-          navigator.clipboard.writeText(text).catch(() => {});
+          // 优先使用 Tauri IPC 写入剪贴板
+          import('@tauri-apps/api/core').then(({ invoke }) => {
+            invoke('write_clipboard', { text }).catch(() => {
+              navigator.clipboard.writeText(text).catch(() => {});
+            });
+          }).catch(() => {
+            navigator.clipboard.writeText(text).catch(() => {});
+          });
           view.dispatch({ changes: { from, to }, selection: { anchor: from } });
           return true;
         }},
@@ -80,15 +87,41 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
           const { from, to } = view.state.selection.main;
           if (from === to) return false;
           const text = view.state.sliceDoc(from, to);
-          navigator.clipboard.writeText(text).catch(() => {});
+          import('@tauri-apps/api/core').then(({ invoke }) => {
+            invoke('write_clipboard', { text }).catch(() => {
+              navigator.clipboard.writeText(text).catch(() => {});
+            });
+          }).catch(() => {
+            navigator.clipboard.writeText(text).catch(() => {});
+          });
           return true;
         }},
         { key: 'Mod-v', run: (view: EditorView) => {
-          navigator.clipboard.readText().then(text => {
-            view.dispatch({
-              changes: { from: view.state.selection.main.from, insert: text },
+          // Bug 6 修复：使用 Tauri IPC 读取剪贴板，避免 macOS "Paste" 权限按钮
+          const from = view.state.selection.main.from;
+          import('@tauri-apps/api/core').then(({ invoke }) => {
+            invoke<string>('read_clipboard').then(text => {
+              view.dispatch({
+                changes: { from, insert: text },
+                selection: { anchor: from + text.length },
+              });
+            }).catch(() => {
+              // 回退到 navigator.clipboard
+              navigator.clipboard.readText().then(text => {
+                view.dispatch({
+                  changes: { from, insert: text },
+                  selection: { anchor: from + text.length },
+                });
+              }).catch(() => {});
             });
-          }).catch(() => {});
+          }).catch(() => {
+            navigator.clipboard.readText().then(text => {
+              view.dispatch({
+                changes: { from, insert: text },
+                selection: { anchor: from + text.length },
+              });
+            }).catch(() => {});
+          });
           return true;
         }},
         // F3: 抑制 CM6 内置 Cmd+F（由前端 useShortcuts 处理）
@@ -107,7 +140,7 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
           setDirty(true);
         }
       }),
-      // 鼠标事件处理（用于同步预览）
+      // 鼠标事件处理（用于同步预览 + Bug 7 修复右键选中整行问题）
       EditorView.domEventHandlers({
         click(_event: MouseEvent, view: EditorView) {
           // 同步预览（仅双屏模式）
@@ -118,6 +151,13 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
           syncTimer.current = setTimeout(() => {
             window.dispatchEvent(new CustomEvent('editor:scroll-preview', { detail: { line: line0 } }));
           }, 100);
+          return false;
+        },
+        // Bug 7 修复：右键时阻止 CM6 默认选中行为（capture 阶段已处理光标移动）
+        mousedown(event: MouseEvent, _view: EditorView) {
+          if (event.button === 2) {
+            return true; // 告诉 CM6 跳过默认处理
+          }
           return false;
         },
       }),
@@ -193,7 +233,28 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
       }, 50);
     };
 
-    const handleMouseDownCapture = () => {
+    // 标记右键正在按下，用于 selectstart 拦截
+    let rightClickActive = false;
+
+    const handleMouseDownCapture = (event: MouseEvent) => {
+      // Bug 7 修复：右键点击时彻底阻止选中行为
+      // 必须在 capture 阶段用 stopImmediatePropagation 阻止事件到达 CM6 的 MouseSelection
+      if (event.button === 2) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        rightClickActive = true;
+        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        if (pos !== null) {
+          const { from, to } = view.state.selection.main;
+          if (pos < from || pos > to) {
+            view.dispatch({ selection: { anchor: pos } });
+          }
+        }
+        // 短暂延迟后重置右键标记
+        setTimeout(() => { rightClickActive = false; }, 300);
+        return;
+      }
+
       // 措施1：覆盖 lastSelectionOrigin 为 "select.pointer"
       // @ts-ignore - 访问 CM6 内部 inputState
       const inputState = view.inputState;
@@ -213,7 +274,16 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
       }
     };
 
+    // Bug 7 补充：拦截 selectstart 事件，防止 WebKit 在 contenteditable 上右键选词
+    const handleSelectStart = (event: Event) => {
+      if (rightClickActive) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    };
+
     contentDOM.addEventListener('mousedown', handleMouseDownCapture, true);
+    contentDOM.addEventListener('selectstart', handleSelectStart, true);
     contentDOM.addEventListener('mouseup', handleMouseUp, true);
     scroller.addEventListener('scroll', handleScrollLock, true);
 
@@ -221,6 +291,7 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
       view,
       cleanup: () => {
         contentDOM.removeEventListener('mousedown', handleMouseDownCapture, true);
+        contentDOM.removeEventListener('selectstart', handleSelectStart, true);
         contentDOM.removeEventListener('mouseup', handleMouseUp, true);
         scroller.removeEventListener('scroll', handleScrollLock, true);
         if (scrollLockTimer) clearTimeout(scrollLockTimer);
@@ -357,7 +428,15 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
 
     const goNext = () => {
       const view = viewRef.current;
-      if (!view || currentMatches.length === 0) return;
+      if (!view) return;
+      // Bug 4 修复：如果当前匹配列表为空，重新搜索
+      if (currentMatches.length === 0) {
+        const q = getSearchQuery(view.state);
+        if (q && q.search) {
+          performSearch(q.search);
+        }
+        return;
+      }
       currentMatchIdx = (currentMatchIdx + 1) % currentMatches.length;
       const m = currentMatches[currentMatchIdx];
       view.dispatch({
@@ -370,7 +449,15 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
 
     const goPrev = () => {
       const view = viewRef.current;
-      if (!view || currentMatches.length === 0) return;
+      if (!view) return;
+      // Bug 4 修复：如果当前匹配列表为空，重新搜索
+      if (currentMatches.length === 0) {
+        const q = getSearchQuery(view.state);
+        if (q && q.search) {
+          performSearch(q.search);
+        }
+        return;
+      }
       currentMatchIdx = currentMatchIdx <= 0 ? currentMatches.length - 1 : currentMatchIdx - 1;
       const m = currentMatches[currentMatchIdx];
       view.dispatch({
@@ -394,16 +481,32 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
       view.focus();
     };
 
-    // Bug 6 修复：替换后跳转到下一个匹配，而不是跳回第一个
+    // Bug 1 + Bug 3 修复：替换后更新保存状态 + 防止重复执行
     const doReplaceNext = (e: Event) => {
       const view = viewRef.current;
       if (!view || currentMatches.length === 0 || currentMatchIdx < 0) return;
       const replacement = (e as CustomEvent<{ replacement: string }>).detail?.replacement || '';
       const m = currentMatches[currentMatchIdx];
+
+      // Bug 3 修复：验证当前位置的文本是否仍然匹配搜索词
+      const currentText = view.state.sliceDoc(m.from, m.to);
+      const q = getSearchQuery(view.state);
+      if (q && q.search && currentText !== q.search) {
+        // 位置不匹配，重新搜索
+        performSearch(q.search);
+        return;
+      }
+
       const replaceEnd = m.from + replacement.length;
 
       isExternalUpdate.current = true;
       view.dispatch({ changes: { from: m.from, to: m.to, insert: replacement } });
+
+      // Bug 1 修复：替换是用户操作，需要更新内容并标记为未保存
+      const newContent = view.state.doc.toString();
+      setContent(newContent);
+      setDirty(true);
+
       requestAnimationFrame(() => { isExternalUpdate.current = false; });
 
       // 替换后重新搜索，但跳到替换位置之后的匹配
@@ -453,6 +556,7 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
       }, 0);
     };
 
+    // Bug 1 + Bug 3 修复：全部替换后更新保存状态 + 清除匹配列表
     const doReplaceAll = (e: Event) => {
       const view = viewRef.current;
       if (!view || currentMatches.length === 0) return;
@@ -463,12 +567,49 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
       for (const m of sorted) {
         view.dispatch({ changes: { from: m.from, to: m.to, insert: replacement } });
       }
+
+      // Bug 1 修复：替换是用户操作，需要更新内容并标记为未保存
+      const newContent = view.state.doc.toString();
+      setContent(newContent);
+      setDirty(true);
+
       requestAnimationFrame(() => { isExternalUpdate.current = false; });
-      // 清除搜索状态
-      view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: '' })) });
-      window.dispatchEvent(new CustomEvent('editor:find-results', {
-        detail: { results: [], currentIndex: -1, totalCount: 0, replaceCount: currentMatches.length },
-      }));
+
+      // Bug 3 + Bug 4 修复：替换后重新搜索以更新匹配列表
+      const q = getSearchQuery(view.state);
+      if (q && q.search) {
+        const searchQuery = new SearchQuery({ search: q.search });
+        view.dispatch({ effects: setSearchQuery.of(searchQuery) });
+
+        // 重新收集匹配
+        const matches: Array<{ from: number; to: number; line: number }> = [];
+        try {
+          const cursor = searchQuery.getCursor(view.state);
+          let iterResult = cursor.next();
+          while (!iterResult.done) {
+            const val = iterResult.value as { from: number; to: number };
+            matches.push({
+              from: val.from,
+              to: val.to,
+              line: view.state.doc.lineAt(val.from).number,
+            });
+            iterResult = cursor.next();
+            if (matches.length >= 200) break;
+          }
+        } catch {}
+
+        currentMatches = matches;
+        currentMatchIdx = matches.length > 0 ? 0 : -1;
+        sendResults(view, matches, currentMatchIdx);
+      } else {
+        // 没有搜索词，清除状态
+        currentMatches = [];
+        currentMatchIdx = -1;
+        view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: '' })) });
+        window.dispatchEvent(new CustomEvent('editor:find-results', {
+          detail: { results: [], currentIndex: -1, totalCount: 0 },
+        }));
+      }
     };
 
     const handlers: Array<[string, EventListener]> = [

@@ -154,7 +154,113 @@ function AppInner() {
       console.log('[MDnote] __openFileByPath called from Rust eval:', path);
       openFileByPath(path);
     };
-    return () => { delete (window as any).__openFileByPath; };
+
+    // Bug 5/6 修复：注册 Edit 菜单命令处理函数
+    // macOS Edit 菜单事件通过 Rust eval() 调用此函数
+    (window as any).__handleEditCommand = async (cmd: string) => {
+      const active = document.activeElement as HTMLElement;
+
+      // 对 input/textarea 元素执行编辑命令
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+        if (cmd === 'paste') {
+          try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            const text = await invoke<string>('read_clipboard');
+            const input = active as HTMLInputElement;
+            const start = input.selectionStart || 0;
+            const end = input.selectionEnd || 0;
+            const value = input.value;
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+              window.HTMLInputElement.prototype, 'value'
+            )?.set || Object.getOwnPropertyDescriptor(
+              window.HTMLTextAreaElement.prototype, 'value'
+            )?.set;
+            if (nativeInputValueSetter) {
+              nativeInputValueSetter.call(input, value.slice(0, start) + text + value.slice(end));
+            } else {
+              input.value = value.slice(0, start) + text + value.slice(end);
+            }
+            input.selectionStart = input.selectionEnd = start + text.length;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          } catch {}
+        } else if (cmd === 'select-all') {
+          document.execCommand('selectAll');
+        } else {
+          document.execCommand(cmd);
+        }
+        return;
+      }
+
+      // 对 CM6 编辑器执行编辑命令
+      const cmEl = document.querySelector('.cm-editor') as any;
+      if (cmEl && cmEl.cmView) {
+        const view = cmEl.cmView.view;
+        const { from, to } = view.state.selection.main;
+
+        switch (cmd) {
+          case 'copy': {
+            if (from !== to) {
+              const text = view.state.sliceDoc(from, to);
+              try {
+                const { invoke } = await import('@tauri-apps/api/core');
+                await invoke('write_clipboard', { text });
+              } catch {
+                navigator.clipboard.writeText(text).catch(() => {});
+              }
+            }
+            break;
+          }
+          case 'cut': {
+            if (from !== to) {
+              const text = view.state.sliceDoc(from, to);
+              try {
+                const { invoke } = await import('@tauri-apps/api/core');
+                await invoke('write_clipboard', { text });
+              } catch {
+                navigator.clipboard.writeText(text).catch(() => {});
+              }
+              view.dispatch({ changes: { from, to }, selection: { anchor: from } });
+            }
+            break;
+          }
+          case 'paste': {
+            try {
+              const { invoke } = await import('@tauri-apps/api/core');
+              const text = await invoke<string>('read_clipboard');
+              view.dispatch({
+                changes: { from: view.state.selection.main.from, insert: text },
+              });
+            } catch {
+              navigator.clipboard.readText().then(text => {
+                view.dispatch({
+                  changes: { from: view.state.selection.main.from, insert: text },
+                });
+              }).catch(() => {});
+            }
+            break;
+          }
+          case 'undo': {
+            const { undo } = await import('@codemirror/commands');
+            undo(view);
+            break;
+          }
+          case 'redo': {
+            const { redo } = await import('@codemirror/commands');
+            redo(view);
+            break;
+          }
+          case 'select-all': {
+            view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } });
+            break;
+          }
+        }
+      }
+    };
+
+    return () => {
+      delete (window as any).__openFileByPath;
+      delete (window as any).__handleEditCommand;
+    };
   }, []);
 
   // ─── F2: 新窗口 URL 参数处理 ───

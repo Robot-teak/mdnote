@@ -34,10 +34,12 @@ export function useAutoSave() {
     }
   }, []);
 
-  /** 手动保存（⌘S） */
+  /** 手动保存（⌘S）— Bug 2 修复：即使 isDirty 为 false 也执行保存 */
   const saveNow = useCallback(async () => {
     const state = useAppStore.getState();
-    if (!state.filePath || !state.isDirty) return;
+    if (!state.filePath) return;
+    // Bug 2 修复：不再检查 isDirty，总是执行保存
+    // 这样用户在"已保存"状态下按 ⌘S 也能确认保存
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('write_file', { path: state.filePath, content: state.content });

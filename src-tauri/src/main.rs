@@ -3,7 +3,7 @@
 mod commands;
 
 use tauri::{Emitter, Manager, RunEvent};
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use mdnote_lib::PENDING_FILE;
 
 fn main() {
@@ -15,13 +15,12 @@ fn main() {
             eprintln!("[MDnote] Window URL: {:?}", window.url());
 
             // ─── 自定义 macOS 菜单 ───
-            // 拦截 About 菜单，让前端打开自定义 About 对话框
             let about_item = MenuItem::with_id(app, "about", "About MDnote", true, None::<&str>)?;
-            let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
-            let hide = tauri::menu::PredefinedMenuItem::hide(app, None)?;
-            let hide_others = tauri::menu::PredefinedMenuItem::hide_others(app, None)?;
-            let show_all = tauri::menu::PredefinedMenuItem::show_all(app, None)?;
-            let quit = tauri::menu::PredefinedMenuItem::quit(app, None)?;
+            let separator = PredefinedMenuItem::separator(app)?;
+            let hide = PredefinedMenuItem::hide(app, None)?;
+            let hide_others = PredefinedMenuItem::hide_others(app, None)?;
+            let show_all = PredefinedMenuItem::show_all(app, None)?;
+            let quit = PredefinedMenuItem::quit(app, None)?;
 
             let app_name_menu = tauri::menu::Submenu::with_items(
                 app,
@@ -38,13 +37,53 @@ fn main() {
                 ],
             )?;
 
-            let menu = Menu::with_items(app, &[&app_name_menu])?;
+            // ─── Edit 菜单（修复 Bug 5/6：macOS 需要 Edit 菜单才能让 WebView 中的剪贴板快捷键正常工作）───
+            let undo_item = MenuItem::with_id(app, "undo", "Undo", true, None::<&str>)?;
+            let redo_item = MenuItem::with_id(app, "redo", "Redo", true, None::<&str>)?;
+            let cut_item = MenuItem::with_id(app, "cut", "Cut", true, None::<&str>)?;
+            let copy_item = MenuItem::with_id(app, "copy", "Copy", true, None::<&str>)?;
+            let paste_item = MenuItem::with_id(app, "paste", "Paste", true, None::<&str>)?;
+            let select_all_item = MenuItem::with_id(app, "select-all", "Select All", true, None::<&str>)?;
+            let edit_separator1 = PredefinedMenuItem::separator(app)?;
+            let edit_separator2 = PredefinedMenuItem::separator(app)?;
+
+            let edit_menu = tauri::menu::Submenu::with_items(
+                app,
+                "Edit",
+                true,
+                &[
+                    &undo_item,
+                    &redo_item,
+                    &edit_separator1,
+                    &cut_item,
+                    &copy_item,
+                    &paste_item,
+                    &edit_separator2,
+                    &select_all_item,
+                ],
+            )?;
+
+            let menu = Menu::with_items(app, &[&app_name_menu, &edit_menu])?;
             app.set_menu(menu)?;
 
-            // 监听 About 菜单点击，emit 事件给前端
+            // 监听菜单事件
             app.on_menu_event(move |app_handle, event| {
-                if event.id() == "about" {
-                    let _ = app_handle.emit("show-about-dialog", ());
+                match event.id().as_ref() {
+                    "about" => {
+                        let _ = app_handle.emit("show-about-dialog", ());
+                    }
+                    // Edit 菜单事件：通过 JS 在 WebView 中执行对应操作
+                    "undo" | "redo" | "cut" | "copy" | "paste" | "select-all" => {
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let cmd = event.id().as_ref();
+                            let js = format!(
+                                "if(window.__handleEditCommand)window.__handleEditCommand('{}')",
+                                cmd
+                            );
+                            let _ = window.eval(&js);
+                        }
+                    }
+                    _ => {}
                 }
             });
 
@@ -63,6 +102,8 @@ fn main() {
             commands::file::set_window_title,
             commands::file::create_new_window,
             commands::file::open_file_in_new_window,
+            commands::file::read_clipboard,
+            commands::file::write_clipboard,
             commands::shell::open_url,
         ])
         .build(tauri::generate_context!())
