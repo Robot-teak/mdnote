@@ -108,6 +108,19 @@ def create_app_bundle(target: str, arch_label: str, arch_name: str) -> str:
 
     # Rename to final name (strip arch suffix from directory name)
     shutil.move(intermediate_app, final_app)
+
+    # Ad-hoc code signing (prevents macOS "damaged" error for unsigned apps)
+    print(f"  Signing {APP_NAME}.app (ad-hoc) ...")
+    sign_result = subprocess.run(
+        ["codesign", "--force", "--deep", "--sign", "-", final_app],
+        capture_output=True, text=True,
+    )
+    if sign_result.returncode != 0:
+        print(f"  ⚠ Ad-hoc signing failed: {sign_result.stderr}")
+        print(f"  The app will still work but may trigger Gatekeeper warnings.")
+    else:
+        print(f"  ✓ Ad-hoc signed")
+
     return final_app
 
 
