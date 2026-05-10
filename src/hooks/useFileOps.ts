@@ -41,8 +41,12 @@ export function useFileOps() {
       const path = await invoke<string | null>('open_dialog');
       if (!path) return; // User cancelled
 
-      // F2: 当前窗口有内容 → 在新窗口打开
+      // F2: 当前窗口有内容 → 在新窗口打开（但如果是同一个文件则跳过）
       if (shouldOpenNewWindow()) {
+        // 如果要打开的文件就是当前窗口正在编辑的文件，跳过
+        if (useAppStore.getState().filePath === path) {
+          return;
+        }
         const theme = useAppStore.getState().theme;
         await invoke('open_file_in_new_window', { path, theme });
         return;

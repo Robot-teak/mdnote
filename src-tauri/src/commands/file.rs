@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// Read a file from disk, return its content as String.
 #[tauri::command]
@@ -157,9 +157,24 @@ pub async fn create_new_window(app: AppHandle, window: tauri::Window, theme: Opt
     Ok(())
 }
 
-/// Open a file in a new MDnote window
+/// Open a file in a new MDnote window, or focus existing window if the file is already open
 #[tauri::command]
 pub async fn open_file_in_new_window(app: AppHandle, window: tauri::Window, path: String, theme: Option<String>) -> Result<(), String> {
+    // 检查是否已有窗口打开了这个文件
+    let encoded_path = simple_url_encode(&path);
+    for win in app.webview_windows().values() {
+        if let Ok(url) = win.url() {
+            let url_str = url.to_string();
+            // 检查 URL 中是否包含 file=参数且路径匹配
+            if url_str.contains(&format!("file={}", encoded_path)) || url_str.contains(&format!("file={}", path)) {
+                // 找到已有窗口，提到前台
+                let _ = win.set_focus();
+                let _ = win.show();
+                return Ok(());
+            }
+        }
+    }
+
     let pos = window
         .outer_position()
         .map_err(|e| e.to_string())?;
@@ -173,7 +188,6 @@ pub async fn open_file_in_new_window(app: AppHandle, window: tauri::Window, path
     );
 
     let is_dark = theme.as_deref() == Some("dark");
-    let encoded_path = simple_url_encode(&path);
     let url = if is_dark {
         format!("index.html?file={}&theme=dark", encoded_path)
     } else {

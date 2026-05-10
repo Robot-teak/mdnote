@@ -93,8 +93,13 @@ async function openFileByPath(path: string) {
     console.log('[MDnote] Opening file from path:', cleanPath);
 
     // F2 fix: 如果当前窗口有内容，在新窗口中打开文件
+    // 但如果当前窗口正在编辑的就是这个文件，直接提到前台
     const { useAppStore: store } = await import('./store/useAppStore');
     const state = store.getState();
+    if (state.filePath === cleanPath) {
+      // 同一个文件，已经在当前窗口打开，无需重复操作
+      return;
+    }
     const hasContent = !state.isWelcome && (state.filePath !== null || state.content.length > 0);
     if (hasContent) {
       const theme = state.theme;
