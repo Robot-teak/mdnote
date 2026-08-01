@@ -2,26 +2,16 @@
 
 ## v0.4.1 (2026-07-31)
 
-### 新功能：Chrome 浏览器插件版（MV3）
+### 新功能
+- 设置面板（SettingsDialog）随桌面版 0.4.1 发布：编辑器样式 / 预览区样式 / 编辑器行为三个分区，所有设置持久化到 localStorage，支持一键恢复默认（工具栏齿轮图标入口）
+- 版本号统一升级至 0.4.1（package.json / tauri.conf.json / Cargo.toml / build_dmg.py / AboutDialog）
 
-**双产物线架构**：桌面版（Tauri）与插件版共享同一套源码，通过构建模式（`--mode extension`）区分产物；`src/lib/platform.ts` 抽象层统一封装 Tauri IPC 与浏览器 Web API，桌面版功能完整保留不受影响。
+### Bug 修复
+- 修复视图切换快捷键 `Cmd+Option+1/2/3`（编辑器 / 分屏 / 预览）在 macOS 下失效的问题（改用物理键位 `e.code` 判定，兼容 `Cmd`/`Ctrl` + `Option`）
+- 修复构建脚本 `build.rs` 缺失导致前端资源无法正确嵌入、全新克隆构建失败与白屏的问题
 
-**插件能力**
-- 工具栏图标 / `Ctrl+Shift+M`（Mac `Command+Shift+M`）快捷键打开编辑器标签页
-- File System Access API：打开/保存本地 Markdown 文件，支持目录句柄与图片文件选择
-- 本地草稿：未保存内容 60 秒自动写入 IndexedDB，三态保存指示（编辑中 / 草稿已存 / 磁盘已存）
-- 最近文件：左侧栏「目录」区展示，支持点击恢复草稿、单条删除、一键清空
-- 多标签页文件锁：基于 `chrome.storage.session` 的并发写保护，句柄失效时提示重新授权
-- 首次使用引导（Onboarding）、XSS 防护（DOMPurify 过滤）、导出 HTML/PDF、代码块主题
-- 构建产物 `dist-extension/` 可直接在 `chrome://extensions` 以「加载已解压的扩展程序」方式安装
-
-**技术要点**
-- MV3 manifest：仅申请 `storage` / `downloads` / `contextMenus` 权限（无 tabs），最低 Chrome 102
-- 构建：`npm run build:ext` + `npm run verify:ext`（10 项产物校验），CI 待接入
-
-### 已知局限（后续版本处理）
-- 插件版本地图片在预览区暂以 `[Image: xxx]` 占位符显示，完整预览待后续接线
-- 多标签页文件锁基于草稿 ID，同一文件跨标签页的并发检测待优化（需 `isSameEntry` 稳定文件 ID）
+### 技术改进
+- 恢复标准 Tauri 2 `build.rs`（`tauri_build::build()`），在编译期将 `dist` 嵌入二进制，确保发布的桌面程序始终包含最新前端
 
 ---
 

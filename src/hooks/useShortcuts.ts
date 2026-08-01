@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { useAppStore } from '../store/useAppStore';
+import { readClipboard } from '../lib/platform';
 
 /**
  * Global keyboard shortcut handler.
@@ -17,6 +18,7 @@ export function useShortcuts({ onSave }: { onSave: () => void }) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       const meta = e.metaKey; // macOS Cmd
+      const ctrl = e.ctrlKey;
       const shift = e.shiftKey;
       const alt = e.altKey;
       const key = e.key.toLowerCase();
@@ -35,17 +37,15 @@ export function useShortcuts({ onSave }: { onSave: () => void }) {
             return;
           }
           if (!shift && key === 'v') {
-            // ⌘V → Paste in input（使用 Tauri IPC 避免权限弹窗）
+            // ⌘V → Paste in input（用 platform.readClipboard 统一双产物线）
             e.preventDefault();
             (async () => {
               try {
-                const { invoke } = await import('@tauri-apps/api/core');
-                const text = await invoke<string>('read_clipboard');
+                const text = await readClipboard();
                 const input = target as HTMLInputElement;
                 const start = input.selectionStart || 0;
                 const end = input.selectionEnd || 0;
                 const value = input.value;
-                // 使用 React 兼容的方式更新 input 值
                 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
                   window.HTMLInputElement.prototype, 'value'
                 )?.set || Object.getOwnPropertyDescriptor(
@@ -58,7 +58,7 @@ export function useShortcuts({ onSave }: { onSave: () => void }) {
                 }
                 input.selectionStart = input.selectionEnd = start + text.length;
                 input.dispatchEvent(new Event('input', { bubbles: true }));
-              } catch (err) {
+              } catch {
                 // 回退到 navigator.clipboard
                 try {
                   const text = await navigator.clipboard.readText();
@@ -99,22 +99,24 @@ export function useShortcuts({ onSave }: { onSave: () => void }) {
       }
 
       // Use meta (Cmd) on macOS for shortcuts
-      // ⌘⌥1 → Editor only
-      if (meta && alt && key === '1') {
+      // ⌘⌥1 / Ctrl⌥1 → Editor only
+      // 注意：macOS 上 Option+数字会输出 ¡™£ 等特殊字符，e.key 不再是 '1'，
+      // 因此用 e.code（物理键位）判断，确保匹配成功。
+      if ((meta || ctrl) && alt && e.code === 'Digit1') {
         e.preventDefault();
         setViewMode('editor');
         return;
       }
 
-      // ⌘⌥2 → Split
-      if (meta && alt && key === '2') {
+      // ⌘⌥2 / Ctrl⌥2 → Split
+      if ((meta || ctrl) && alt && e.code === 'Digit2') {
         e.preventDefault();
         setViewMode('split');
         return;
       }
 
-      // ⌘⌥3 → Preview only
-      if (meta && alt && key === '3') {
+      // ⌘⌥3 / Ctrl⌥3 → Preview only
+      if ((meta || ctrl) && alt && e.code === 'Digit3') {
         e.preventDefault();
         setViewMode('preview');
         return;
