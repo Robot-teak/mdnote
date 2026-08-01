@@ -1,83 +1,67 @@
-# Changelog
+# MDnote 更新日志
 
-All notable changes to this project will be documented in this file.
+## v0.4.1 (2026-07-31)
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### 新功能：Chrome 浏览器插件版（MV3）
 
-## [0.3.4] - 2026-05-06
+**双产物线架构**：桌面版（Tauri）与插件版共享同一套源码，通过构建模式（`--mode extension`）区分产物；`src/lib/platform.ts` 抽象层统一封装 Tauri IPC 与浏览器 Web API，桌面版功能完整保留不受影响。
 
-### Added
-- **Multi-Window Support**: Open multiple documents in separate windows
-  - New/Open intelligently routes to a new window when current window has content
-  - New windows inherit parent window size and position (offset by 30px)
-  - Each window has fully independent state
-  - URL parameter support for passing file path to new windows
-- **Interaction Optimization**: Improved editor-preview interaction experience
-- **Find & Replace**: Full find and replace functionality in the sidebar
-  - "Outline" | "Find" tab switching in the sidebar panel
-  - Search input with Enter to find, Shift+Enter to find previous
-  - Next/Previous navigation through matches
-  - Replace single match and Replace All operations
-  - Match count display ("N matches found")
-  - Result list with line numbers and context snippets (virtual scroll, max 200 items)
-  - `Cmd+F` shortcut to open Find panel and focus search input
-  - Match highlighting in the editor via CM6 search integration
-  - Replace UI automatically hidden in preview-only mode
+**插件能力**
+- 工具栏图标 / `Ctrl+Shift+M`（Mac `Command+Shift+M`）快捷键打开编辑器标签页
+- File System Access API：打开/保存本地 Markdown 文件，支持目录句柄与图片文件选择
+- 本地草稿：未保存内容 60 秒自动写入 IndexedDB，三态保存指示（编辑中 / 草稿已存 / 磁盘已存）
+- 最近文件：左侧栏「目录」区展示，支持点击恢复草稿、单条删除、一键清空
+- 多标签页文件锁：基于 `chrome.storage.session` 的并发写保护，句柄失效时提示重新授权
+- 首次使用引导（Onboarding）、XSS 防护（DOMPurify 过滤）、导出 HTML/PDF、代码块主题
+- 构建产物 `dist-extension/` 可直接在 `chrome://extensions` 以「加载已解压的扩展程序」方式安装
 
-### Fixed
-- Fixed known bugs
+**技术要点**
+- MV3 manifest：仅申请 `storage` / `downloads` / `contextMenus` 权限（无 tabs），最低 Chrome 102
+- 构建：`npm run build:ext` + `npm run verify:ext`（10 项产物校验），CI 待接入
 
-### Changed
-- **Markdown Worker**: `data-source-line` attributes now applied to all block-level elements (paragraphs, lists, blockquotes, tables, code blocks, etc.), not just headings
-- **Sidebar**: Restructured with tab navigation (Outline / Find)
-- **Capabilities**: Window permissions changed from `["main"]` to `["*"]` to support multi-window
+### 已知局限（后续版本处理）
+- 插件版本地图片在预览区暂以 `[Image: xxx]` 占位符显示，完整预览待后续接线
+- 多标签页文件锁基于草稿 ID，同一文件跨标签页的并发检测待优化（需 `isSameEntry` 稳定文件 ID）
 
 ---
 
-## [0.2.0] - 2026-04-27
+## v0.4.0 (2026-05-16)
 
-### Added
-- **About Dialog**: New About window with app info, GitHub links, and "Check for Updates" button
-  - Triggered from Toolbar "About" button or macOS native "About MDnote" menu
-  - Automatically checks GitHub Releases API for new versions
-- **Dynamic Window Title**: Window title displays current filename with dirty indicator (●) for unsaved changes
-- **Reveal in Finder**: Click file path in status bar to reveal the file in macOS Finder
-- **Loading Screen**: Branded splash screen with app icon while loading
-- **Open URL Command**: Rust `open_url` command for opening external links in default browser
-- **Set Window Title Command**: Rust `set_window_title` command for dynamic window title updates
-- **Reveal in Finder Command**: Rust `reveal_in_finder` command for macOS Finder integration
+### 新功能
 
-### Changed
-- **App Icon**: New refined icon design
-- **Window Title Format**: Simplified to show only filename (no "— MDnote" suffix)
-- **Auto-save Default**: Auto-save now enabled by default for new documents
-- **Auto-save Interval**: Changed from 3-second debounce to 60-second interval (polling-based, only saves when dirty)
-- **Status Bar**: Simplified — removed theme/view mode indicators, auto-save toggle moved right
-- **TOC Sidebar**: Width increased from 240px to 264px for better readability
-- **Export Dropdown**: Changed from hover-to-show to click-to-show with outside-click dismiss
-- **File Open Polling**: Limited to 10 attempts maximum (previously infinite)
-- **Custom Protocol**: Added `custom-protocol` feature for proper production builds
-- **Styles**: Major CSS overhaul (265 lines changed) for visual polish
+**快捷输入增强**
+- F1: `[` 自动补全链接格式 `[]()` — 输入 `[` 自动插入完整链接语法，Tab 键在 `[]` 和 `()` 之间跳转，`]` 智能跳转到 URL 输入位
+- F2: `![` 图片路径补全 — 输入 `![` 自动触发图片路径提示，支持 Tauri 文件对话框选择本地图片，自动填充相对路径
+- F3: 表格快速生成 — 输入表头行（如 `| A | B |`）后按 Enter，自动补充分隔线行和内容行
 
-### Fixed
-- **TOC Code Block Filter**: Headings inside fenced code blocks (```) are now correctly excluded from the table of contents
-- **AppIcon.icns Size**: Reduced from 2.3MB to 849KB by fixing icon sizing
+**精细化样式定制**
+- F4: 编辑器字体 / 字号 / 行高自定义 — 设置面板中可选择字体、调整字号（12~24px）、行高（1.0~2.5）
+- F5: 代码块高亮主题 — 6 套 highlight.js 主题可选：GitHub / GitHub Dark / Monokai / Atom One Dark / VS Code / VS 2015，支持跟随系统主题自动切换
+- F6: 缩进量 + 预览段落间距 — 可选 2/4/8 空格缩进，段落间距可调（0.5em~2em）
+
+**设置面板**
+- 新增 SettingsDialog 设置面板，Toolbar 齿轮图标入口
+- 三个分区：编辑器样式 / 预览区样式 / 编辑器行为
+- 所有设置持久化到 localStorage，支持一键恢复默认
+
+### Bug 修复
+- 修复 F2 图片文件对话框选择后路径无法插入文档的问题（sliceString 长度 + parenPos 偏移错误）
+- 修复代码块主题手动选择后会被系统主题切换覆盖的问题（codeBlockThemeManuallySet 状态管理）
+
+### 技术改进
+- 新增 `EditorSettings` 接口，统一管理所有编辑器设置项
+- 使用 CM6 Compartment 实现字体/字号/行高/缩进/换行/行号的动态切换
+- CSS 变量驱动编辑器和预览区样式，实现响应式更新
+- hljs 主题通过动态创建 `<link>` 标签加载，避免样式冲突
+- Tab 跳转 keymap 注册在 `indentWithTab` 之前，确保优先级正确
 
 ---
 
-## [0.1.0] - 2026-04-26
+## v0.3.8
 
-### Added
-- Initial release of MDnote
-- CodeMirror 6 editor with Markdown syntax highlighting
-- Real-time markdown preview with markdown-it
-- Three view modes: Editor Only, Split View, Preview Only
-- Table of Contents sidebar with hierarchical navigation
-- Light/Dark theme support with instant switching
-- Auto-save functionality (60-second interval, polling-based)
-- File association support for .md files
-- Keyboard shortcuts for all major functions
-- HTML and PDF export capabilities
-- Web Worker for markdown parsing (performance optimization)
-- macOS "Open With" file association support
+- 基础 Markdown 编辑与预览
+- 明暗主题切换
+- 文件打开/保存/导出 HTML/PDF
+- 目录侧栏
+- 查找替换
+- macOS 文件关联打开
