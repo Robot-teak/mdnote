@@ -35,6 +35,7 @@ const MessageType = {
   OPEN_EDITOR_TAB: 'open-editor-tab',
   TAB_ALIVE: 'tab-alive',
   MD_FILE_OPEN: 'md-file-open',
+  FETCH_RELEASES: 'fetch-releases',
 } as const;
 
 /** 右键菜单 ID */
@@ -193,6 +194,19 @@ chrome.runtime.onMessage.addListener(
           sendResponse({ ok: true, state: result });
         });
         return true; // 异步响应
+      }
+
+      case MessageType.FETCH_RELEASES: {
+        // Proxy GitHub API request from extension page → service worker.
+        // Service workers have unrestricted network access with host_permissions.
+        fetch('https://api.github.com/repos/Robot-teak/mdnote/releases?per_page=30')
+          .then((resp) => {
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            return resp.json();
+          })
+          .then((data) => sendResponse({ ok: true, data }))
+          .catch((err) => sendResponse({ ok: false, error: String(err) }));
+        return true;
       }
 
       default: {

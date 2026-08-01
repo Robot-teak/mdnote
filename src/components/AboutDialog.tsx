@@ -42,22 +42,30 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
     setChecking(true);
     setUpdateResult(null);
     try {
-      const releases = await new Promise<Array<{ tag_name: string; html_url: string }>>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('GET', GITHUB_RELEASES_API);
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try { resolve(JSON.parse(xhr.responseText)); }
-            catch { reject(new Error('Invalid JSON response')); }
-          } else {
-            reject(new Error(`HTTP ${xhr.status}`));
-          }
-        };
-        xhr.onerror = () => reject(new Error('Network error'));
-        xhr.ontimeout = () => reject(new Error('Request timed out'));
-        xhr.timeout = 15000;
-        xhr.send();
-      });
+      // Route through background service worker for reliable GitHub API access.
+      // Extension pages in some browsers (Edge) may have fetch() issues even
+      // with host_permissions. Service workers have full network access.
+      let releases: Array<{ tag_name: string; html_url: string }>;
+      if (isExtension && typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        const res = await chrome.runtime.sendMessage({ type: 'fetch-releases' });
+        if (!res || !res.ok) throw new Error(res?.error || 'Service worker error');
+        releases = res.data;
+      } else {
+        // Desktop: use XHR directly
+        releases = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', GITHUB_RELEASES_API);
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try { resolve(JSON.parse(xhr.responseText)); }
+              catch { reject(new Error('Invalid response')); }
+            } else reject(new Error(`HTTP ${xhr.status}`));
+          };
+          xhr.onerror = () => reject(new Error('Network error'));
+          xhr.timeout = 15000;
+          xhr.send();
+        });
+      }
 
       const myReleases = releases.filter(
         (r: { tag_name: string }) => r.tag_name && r.tag_name.startsWith(TAG_PREFIX)
