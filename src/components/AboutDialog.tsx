@@ -7,7 +7,7 @@ const CURRENT_VERSION = isExtension ? '0.1.9' : '0.4.1';
 const TAG_PREFIX = isExtension ? 'extension-v' : 'desktop-v';
 const GITHUB_REPO = 'https://github.com/Robot-teak/mdnote';
 const GITHUB_AUTHOR = 'https://github.com/Robot-teak';
-const GITHUB_RELEASES_API = 'https://api.github.com/repos/Robot-teak/mdnote/releases?per_page=30';
+const VERSION_URL = 'https://raw.githubusercontent.com/Robot-teak/mdnote/main/version.json';
 
 interface AboutDialogProps {
   onClose: () => void;
@@ -42,29 +42,14 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
     setChecking(true);
     setUpdateResult(null);
     try {
-      const resp = await fetch(GITHUB_RELEASES_API);
+      // Fetch version.json (plain static file, avoids GitHub API rate limits and 403 issues)
+      const resp = await fetch(VERSION_URL, { cache: 'no-store' });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const releases = await resp.json();
-      
-      // Filter releases by product tag prefix (desktop-v / extension-v)
-      const myReleases = releases.filter(
-        (r: { tag_name: string }) => r.tag_name && r.tag_name.startsWith(TAG_PREFIX)
-      );
-      
-      if (myReleases.length === 0) {
-        setUpdateResult({
-          hasUpdate: false,
-          message: `No releases found for ${TAG_PREFIX}*`,
-        });
-        setChecking(false);
-        return;
-      }
-
-      // First release in the filtered list is the latest (GitHub returns newest first)
-      const latest = myReleases[0];
-      const latestTag = latest.tag_name as string; // e.g. "desktop-v0.4.2"
-      const latestVersion = latestTag.replace(/^[a-z]+-v/, ''); // "0.4.2"
-      const htmlUrl = latest.html_url as string;
+      const latest = await resp.json();
+      const key = isExtension ? 'extension' : 'desktop';
+      const latestVersion: string = latest[key] || '0.0.0';
+      const releaseFilter = isExtension ? 'extension-v' : 'desktop-v';
+      const htmlUrl = `${GITHUB_REPO}/releases?q=${releaseFilter}`;
 
       if (compareVersions(latestVersion, CURRENT_VERSION) > 0) {
         setUpdateResult({

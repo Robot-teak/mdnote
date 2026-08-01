@@ -44,7 +44,7 @@
     "tabs"
   ],
   "host_permissions": [
-    "https://api.github.com/*"
+    "https://raw.githubusercontent.com/*"
   ],
   "commands": {
     "open-editor": {
