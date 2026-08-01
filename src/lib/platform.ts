@@ -17,6 +17,9 @@ import {
   generateFileId,
 } from './fileSystem';
 
+// v0.1.8：目录授权直写（目录内文件保存免弹窗写回原文件）
+export { authorizeDirectory, tryWriteFileViaDir, getFileHandleViaDir } from './fileSystem';
+
 // ──────────────────────────────────────────────
 // 常量与类型
 // ──────────────────────────────────────────────

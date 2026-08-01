@@ -1486,6 +1486,14 @@ html, body, #root {
   margin: 0 0 2px;
 }
 
+.about-subtitle {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--mf-accent, #2563eb);
+  margin: 0 0 2px;
+}
+
 .about-version {
   font-size: 13px;
   color: var(--mf-text-muted);

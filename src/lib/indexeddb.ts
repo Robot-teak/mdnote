@@ -22,12 +22,13 @@
  * 数据库配置常量。
  */
 export const DB_NAME = 'mdnote-ext';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 /** Store 名称 */
 export const STORE_DRAFTS = 'drafts';
 export const STORE_HANDLES = 'handles';
 export const STORE_RECENT = 'recent';
+export const STORE_DIRS = 'dirs';
 
 /** 当前 schema 版本号 */
 export const CURRENT_SCHEMA_VERSION = 1;
@@ -174,6 +175,11 @@ export function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE_RECENT)) {
         const recentStore = db.createObjectStore(STORE_RECENT, { keyPath: 'id' });
         recentStore.createIndex('lastAccessed', 'lastAccessed', { unique: false });
+      }
+
+      // dirs store：已授权目录句柄（目录内文件保存免弹窗直写原文件，v0.1.8）
+      if (!db.objectStoreNames.contains(STORE_DIRS)) {
+        db.createObjectStore(STORE_DIRS, { keyPath: 'id' });
       }
     };
   });
@@ -582,4 +588,63 @@ export async function getDataSchemaVersion(): Promise<number> {
 export async function needsMigration(): Promise<boolean> {
   const dataVersion = await getDataSchemaVersion();
   return dataVersion < CURRENT_SCHEMA_VERSION;
+}
+
+// ──────────────────────────────────────────────
+// 已授权目录句柄 CRUD（dirs store，v0.1.8）
+// ──────────────────────────────────────────────
+
+/** 目录句柄记录 */
+export interface DirRecord {
+  /** 唯一标识（固定 'default'，单目录授权） */
+  id: string;
+  /** 目录句柄（结构化克隆存储） */
+  handle: FileSystemDirectoryHandle;
+  /** 目录名 */
+  name: string;
+  /** 授权时间戳 */
+  savedAt: number;
+}
+
+/** 目录句柄存储键 */
+export const DIR_KEY = 'default';
+
+/**
+ * 保存已授权目录句柄（保存目录内文件时免弹窗直写原文件）。
+ * @param handle 目录句柄
+ * @returns 保存后的记录
+ */
+export async function saveDirHandle(handle: FileSystemDirectoryHandle): Promise<DirRecord> {
+  const db = await openDB();
+  const store = getStore(db, STORE_DIRS, 'readwrite');
+  const record: DirRecord = {
+    id: DIR_KEY,
+    handle,
+    name: handle.name,
+    savedAt: Date.now(),
+  };
+  store.put(record);
+  await waitForTransaction(store);
+  return record;
+}
+
+/**
+ * 获取已授权目录句柄。
+ * @returns 目录记录，不存在返回 null
+ */
+export async function getDirHandle(): Promise<DirRecord | null> {
+  const db = await openDB();
+  const store = getStore(db, STORE_DIRS, 'readonly');
+  const result = await requestToPromise(store.get(DIR_KEY));
+  return (result as DirRecord) ?? null;
+}
+
+/**
+ * 删除已授权目录句柄。
+ */
+export async function clearDirHandle(): Promise<void> {
+  const db = await openDB();
+  const store = getStore(db, STORE_DIRS, 'readwrite');
+  store.delete(DIR_KEY);
+  await waitForTransaction(store);
 }

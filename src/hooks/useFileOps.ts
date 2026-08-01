@@ -169,6 +169,12 @@ export function useFileOps() {
       setIsPreviewLoading(true);
       setFilePath(path ?? name);
       setContent(content);
+      // 无句柄但已授权目录时，尝试按文件名绑定句柄（浏览器打开的文件 → 自动保存直写原文件）
+      if (!handle && isExtension && path) {
+        const { getFileHandleViaDir } = await import('../lib/platform');
+        const fileName = path.split('/').pop() || name;
+        handle = await getFileHandleViaDir(fileName).catch(() => null);
+      }
       setFileHandle(handle ?? null);
       setDirty(false);
       setSaveState('disk-saved');
@@ -313,9 +319,31 @@ export function useFileOps() {
           useAppStore.getState().setDiskWriteFailed(false); // S22: 清除失败标志
           return true;
         }
-        // 无句柄 → 另存为（结果传给上层：取消时不提示"Saved!"）
-        const ok = await saveAs();
-        return ok;
+        // 无句柄（浏览器打开的文件/新建文档）：
+        // 1) 已授权目录 → 按文件名免弹窗直写原文件
+        // 2) 未授权 → 弹一次目录选择（选文件所在目录），此后该目录文件保存免弹窗
+        const { tryWriteFileViaDir, authorizeDirectory } = await import('../lib/platform');
+        const fileName = state.filePath ? state.filePath.split('/').pop() || state.fileName : state.fileName;
+
+        let wrote = false;
+        if (fileName && state.filePath) {
+          wrote = await tryWriteFileViaDir(fileName, state.content);
+        }
+        if (!wrote) {
+          // 首次保存：授权文件所在目录（此后免弹窗直写原文件）
+          const dir = await authorizeDirectory();
+          if (!dir) return false; // 用户取消 → 不显示"Saved!"
+          wrote = await tryWriteFileViaDir(fileName, state.content);
+        }
+
+        if (wrote) {
+          setDirty(false);
+          setSaveState('disk-saved');
+          useAppStore.getState().setDiskWriteFailed(false);
+          return true;
+        }
+        showToast('Failed to save file', 'error');
+        return false;
       }
 
       // 桌面版

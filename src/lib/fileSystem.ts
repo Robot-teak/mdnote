@@ -588,3 +588,73 @@ export function revokeBlobUrl(url: string): void {
     URL.revokeObjectURL(url);
   }
 }
+
+// ──────────────────────────────────────────────
+// 目录授权直写（v0.1.8：目录内文件保存免弹窗写回原文件）
+// ──────────────────────────────────────────────
+
+/**
+ * 授权文件所在目录并缓存（保存/自动保存时免弹窗直接写回原文件）。
+ * 插件版专用；桌面版无此 API，返回 null。
+ * @returns 授权后的目录句柄，取消/失败返回 null
+ */
+export async function authorizeDirectory(): Promise<FileSystemDirectoryHandle | null> {
+  if (!isDirectoryPickerSupported()) return null;
+  try {
+    const dirHandle = await window.showDirectoryPicker!({ mode: 'readwrite' });
+    const ok = await verifyDirectoryPermission(dirHandle, 'readwrite');
+    if (!ok) return null;
+    const { saveDirHandle } = await import('./indexeddb');
+    await saveDirHandle(dirHandle);
+    return dirHandle;
+  } catch {
+    return null; // 用户取消
+  }
+}
+
+/**
+ * 用已授权目录按文件名写回文件（免弹窗直写原文件）。
+ * @param fileName 目标文件名
+ * @param content 内容
+ * @returns 是否写回成功（未授权目录/找不到文件/失败返回 false）
+ */
+export async function tryWriteFileViaDir(fileName: string, content: string): Promise<boolean> {
+  if (!fileName || !isFileSystemAccessSupported()) return false;
+  try {
+    const { getDirHandle } = await import('./indexeddb');
+    const rec = await getDirHandle();
+    if (!rec) return false;
+    const ok = await verifyDirectoryPermission(rec.handle, 'readwrite');
+    if (!ok) return false;
+    const fileHandle = await rec.handle.getFileHandle(fileName, { create: true });
+    const writable = await fileHandle.createWritable();
+    try {
+      await writable.write(content);
+    } finally {
+      await writable.close();
+    }
+    return true;
+  } catch (err) {
+    console.warn('[MDnote] tryWriteFileViaDir failed:', err);
+    return false;
+  }
+}
+
+/**
+ * 用已授权目录按文件名获取文件句柄（浏览器打开的 file:// 文件，目录已授权时绑定句柄）。
+ * @param fileName 目标文件名
+ * @returns 文件句柄，未授权/不存在返回 null
+ */
+export async function getFileHandleViaDir(fileName: string): Promise<FileSystemFileHandle | null> {
+  if (!fileName || !isFileSystemAccessSupported()) return null;
+  try {
+    const { getDirHandle } = await import('./indexeddb');
+    const rec = await getDirHandle();
+    if (!rec) return null;
+    const ok = await verifyDirectoryPermission(rec.handle, 'readwrite');
+    if (!ok) return null;
+    return await rec.handle.getFileHandle(fileName, { create: false });
+  } catch {
+    return null;
+  }
+}

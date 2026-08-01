@@ -52,10 +52,24 @@ export function useAutoSave() {
         }
       }
 
-      // 仅"无本地路径"的新建文档才存临时草稿（用户规则 2）
+      // 无句柄：
+      // 1) 已授权目录且文件有路径 → 免弹窗直写原文件（浏览器打开的文件自动保存）
+      // 2) 否则存临时草稿（新建文档/未授权，修改后不丢，刷新可从恢复条找回）
       if (state.filePath) {
-        // 有路径但无句柄（如浏览器打开的文件）→ 不存草稿，保持编辑状态
-        return;
+        try {
+          const { tryWriteFileViaDir } = await import('../lib/platform');
+          const fileName = state.filePath.split('/').pop() || state.fileName;
+          const wrote = await tryWriteFileViaDir(fileName, state.content);
+          if (wrote) {
+            lastSavedHash.current = contentHash;
+            state.setDirty(false);
+            state.setSaveState('disk-saved');
+            state.setDiskWriteFailed(false);
+            return;
+          }
+        } catch {
+          // fall through to draft
+        }
       }
 
       const { generateFileId } = await import('../lib/platform');
@@ -69,14 +83,14 @@ export function useAutoSave() {
 
       await saveDraft(draftId, state.content, {
         name: state.fileName,
-        hasHandle: false,
-        filePath: undefined,
+        hasHandle: !!state.fileHandle,
+        filePath: state.filePath || undefined,
       });
 
       lastSavedHash.current = contentHash;
       state.setSaveState('draft-saved');
 
-      addRecent(draftId, state.fileName, false, state.content.length).catch(() => {});
+      addRecent(draftId, state.fileName, !!state.fileHandle, state.content.length).catch(() => {});
     } catch (err) {
       console.error('[AutoSave/Draft] Failed:', err);
       // IndexedDB 失败不影响编辑，状态保持 dirty

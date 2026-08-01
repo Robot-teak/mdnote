@@ -1,64 +1,20 @@
-import { useState } from 'react';
 import { isExtension } from '../lib/platform';
 import { openUrl } from '../lib/platform';
 
-const CURRENT_VERSION = '0.4.1';
+// 插件版独立版本线（v0.1.8 起，不沿用桌面版版本号）；桌面版沿用各自版本
+const CURRENT_VERSION = isExtension ? '0.1.8' : '0.4.1';
 const GITHUB_REPO = 'https://github.com/Robot-teak/mdnote';
 const GITHUB_AUTHOR = 'https://github.com/Robot-teak';
-const GITHUB_RELEASES_API = 'https://api.github.com/repos/Robot-teak/mdnote/releases/latest';
 
 interface AboutDialogProps {
   onClose: () => void;
 }
 
+async function openLink(url: string) {
+  await openUrl(url);
+}
+
 export default function AboutDialog({ onClose }: AboutDialogProps) {
-  const [checking, setChecking] = useState(false);
-  const [updateResult, setUpdateResult] = useState<{
-    hasUpdate: boolean;
-    latestVersion?: string;
-    message: string;
-  } | null>(null);
-
-  async function checkForUpdates() {
-    setChecking(true);
-    setUpdateResult(null);
-    try {
-      const resp = await fetch(GITHUB_RELEASES_API);
-      if (!resp.ok) throw new Error('Network error');
-      const data = await resp.json();
-      const latestTag = data.tag_name as string; // e.g. "v0.2.0"
-      const latestVersion = latestTag.replace(/^v/, ''); // "0.2.0"
-      const htmlUrl = data.html_url as string;
-
-      if (compareVersions(latestVersion, CURRENT_VERSION) > 0) {
-        setUpdateResult({
-          hasUpdate: true,
-          latestVersion,
-          message: `New version v${latestVersion} available!`,
-        });
-        // Open release page
-        await openLink(htmlUrl || `${GITHUB_REPO}/releases/latest`);
-      } else {
-        setUpdateResult({
-          hasUpdate: false,
-          latestVersion,
-          message: `You're up to date (v${CURRENT_VERSION})`,
-        });
-      }
-    } catch {
-      setUpdateResult({
-        hasUpdate: false,
-        message: 'Failed to check for updates',
-      });
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  async function openLink(url: string) {
-    await openUrl(url);
-  }
-
   return (
     <div className="about-overlay" onClick={onClose}>
       <div className="about-dialog" onClick={(e) => e.stopPropagation()}>
@@ -68,21 +24,37 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
         {/* Icon & Title */}
         <img src={isExtension ? './icon.png' : '/icon.png'} alt="MDnote" className="about-icon" />
         <h1 className="about-title">MDnote</h1>
+        {isExtension && <p className="about-subtitle">Chrome Extensions</p>}
         <p className="about-version">Version {CURRENT_VERSION}</p>
 
-        {/* Description */}
+        {/* Description（插件版/桌面版分别说明，均为英文） */}
         <p className="about-description">
-          A lightweight, high-performance macOS Markdown editor.
+          {isExtension
+            ? 'A clean Markdown editor for Chrome — edit, preview and export Markdown with live rendering.'
+            : 'A lightweight, high-performance macOS Markdown editor.'}
           <br />
-          Built with Tauri 2.0 + React 18.
+          {isExtension
+            ? 'Built with Chrome Extensions (MV3) + React 18.'
+            : 'Built with Tauri 2.0 + React 18.'}
         </p>
 
         {/* Tech stack */}
         <div className="about-tech">
-          <span>Tauri 2.0</span>
-          <span>React 18</span>
-          <span>CodeMirror 6</span>
-          <span>markdown-it</span>
+          {isExtension ? (
+            <>
+              <span>Chrome MV3</span>
+              <span>React 18</span>
+              <span>CodeMirror 6</span>
+              <span>markdown-it</span>
+            </>
+          ) : (
+            <>
+              <span>Tauri 2.0</span>
+              <span>React 18</span>
+              <span>CodeMirror 6</span>
+              <span>markdown-it</span>
+            </>
+          )}
         </div>
 
         {/* Links */}
@@ -98,45 +70,13 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
           </button>
         </div>
 
-        {/* Check Update */}
-        <div className="about-update">
-          <button
-            className="about-update-btn"
-            onClick={checkForUpdates}
-            disabled={checking}
-          >
-            {checking ? 'Checking...' : 'Check for Updates'}
-          </button>
-          {updateResult && (
-            <p className={`about-update-msg ${updateResult.hasUpdate ? 'has-update' : ''}`}>
-              {updateResult.message}
-              {updateResult.hasUpdate && (
-                <button className="about-goto-update" onClick={() => openLink(`${GITHUB_REPO}/releases/latest`)}>
-                  Go to download →
-                </button>
-              )}
-            </p>
-          )}
-        </div>
-
         {/* Footer */}
         <p className="about-footer">
-          Made with ❤️ using Tauri + React
+          {isExtension
+            ? 'Made with ❤️ using Chrome Extensions + React'
+            : 'Made with ❤️ using Tauri + React'}
         </p>
       </div>
     </div>
   );
-}
-
-/** Compare semver versions. Returns 1 if a > b, -1 if a < b, 0 if equal */
-function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const na = pa[i] || 0;
-    const nb = pb[i] || 0;
-    if (na > nb) return 1;
-    if (na < nb) return -1;
-  }
-  return 0;
 }
