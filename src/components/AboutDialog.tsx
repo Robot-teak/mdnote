@@ -42,9 +42,22 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
     setChecking(true);
     setUpdateResult(null);
     try {
-      const resp = await fetch(GITHUB_RELEASES_API);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const releases = await resp.json();
+      const releases = await new Promise<Array<{ tag_name: string; html_url: string }>>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', GITHUB_RELEASES_API);
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try { resolve(JSON.parse(xhr.responseText)); }
+            catch { reject(new Error('Invalid JSON response')); }
+          } else {
+            reject(new Error(`HTTP ${xhr.status}`));
+          }
+        };
+        xhr.onerror = () => reject(new Error('Network error'));
+        xhr.ontimeout = () => reject(new Error('Request timed out'));
+        xhr.timeout = 15000;
+        xhr.send();
+      });
 
       const myReleases = releases.filter(
         (r: { tag_name: string }) => r.tag_name && r.tag_name.startsWith(TAG_PREFIX)
