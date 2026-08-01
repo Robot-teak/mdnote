@@ -42,9 +42,19 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
     setChecking(true);
     setUpdateResult(null);
     try {
-      const resp = await fetch(GITHUB_RELEASES_API);
-      if (!resp.ok) throw new Error('Network error');
-      const releases = await resp.json();
+      // Route through background service worker for reliable cross-origin fetch.
+      // Extension pages may have inconsistent fetch() behavior across browsers
+      // even with host_permissions declared.
+      let releases: Array<{ tag_name: string; html_url: string }>;
+      if (isExtension && typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        const res = await chrome.runtime.sendMessage({ type: 'check-update' });
+        if (!res || !res.ok) throw new Error(res?.error || 'Background request failed');
+        releases = res.data;
+      } else {
+        const resp = await fetch(GITHUB_RELEASES_API);
+        if (!resp.ok) throw new Error('Network error');
+        releases = await resp.json();
+      }
       
       // Filter releases by product tag prefix (desktop-v / extension-v)
       const myReleases = releases.filter(
@@ -80,10 +90,11 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
           message: `You're up to date (v${CURRENT_VERSION})`,
         });
       }
-    } catch {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       setUpdateResult({
         hasUpdate: false,
-        message: 'Failed to check for updates',
+        message: `Update check failed: ${msg}`,
       });
     } finally {
       setChecking(false);
