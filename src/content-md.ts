@@ -61,8 +61,12 @@
 
       if (!res || !res.ok) {
         console.warn('[MDnote] Failed to open in editor:', res?.error || 'no response');
+        return;
       }
-      // 成功：编辑器已在后台打开（原页面保留）
+
+      // Navigate current tab to editor (instead of opening a new tab),
+      // so the plain-text view is replaced rather than leaving a leftover tab.
+      location.replace(chrome.runtime.getURL('editor.html'));
     } catch (err) {
       console.warn('[MDnote] Auto-open failed:', err);
     }
