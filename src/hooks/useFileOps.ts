@@ -10,7 +10,7 @@ import {
   saveDialog,
   writeFile,
 } from '../lib/platform';
-import { acquireFileLock, releaseFileLock, isFileLocked } from '../lib/messaging';
+import { acquireFileLock, releaseFileLock, isFileLocked, openEditorInNewTab } from '../lib/messaging';
 
 /**
  * File operation hooks: open, new, save-as, and preview rendering.
@@ -19,11 +19,19 @@ import { acquireFileLock, releaseFileLock, isFileLocked } from '../lib/messaging
  * 桌面版逻辑完整保留不破坏。
  */
 
-/** 判断当前窗口是否有内容，决定是复用窗口还是开新窗口（桌面版） */
-function shouldOpenNewWindow(): boolean {
-  if (isExtension) return false; // 插件版不支持多窗口
+/** 判断当前窗口是否已加载文档（决定 New/Open 是复用窗口还是开新窗口/新标签页） */
+function hasDocumentLoaded(): boolean {
   const state = useAppStore.getState();
   return !state.isWelcome && (state.filePath !== null || state.content.length > 0);
+}
+
+/**
+ * 判断 New/Open 是否应在新窗口（桌面版）/ 新标签页（插件版）打开。
+ * - 桌面版：多窗口，已加载文档时开新窗口
+ * - 插件版：多标签页，已加载文档时开新标签页（#4，不替换当前内容）
+ */
+function shouldOpenNewWindow(): boolean {
+  return hasDocumentLoaded();
 }
 
 export function useFileOps() {
@@ -51,14 +59,45 @@ export function useFileOps() {
       const result = await openDialog();
       if (!result) return; // User cancelled
 
-      // 桌面版：当前窗口有内容 → 在新窗口打开
-      if (isDesktop && shouldOpenNewWindow()) {
+      // 当前窗口有文档 → 新窗口（桌面版）/ 新标签页（插件版）打开，不替换当前内容（#4）
+      if (shouldOpenNewWindow()) {
         if (useAppStore.getState().filePath === result.path) {
           return; // 同一文件跳过
         }
         const theme = useAppStore.getState().theme;
-        const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('open_file_in_new_window', { path: result.path, theme });
+        if (isDesktop) {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('open_file_in_new_window', { path: result.path, theme });
+          return;
+        }
+        // 插件版：暂存文件数据（内容 + 句柄），让新标签页恢复
+        try {
+          const { generateFileId } = await import('../lib/platform');
+          const { saveDraft, saveHandle } = await import('../lib/indexeddb');
+          const draftId = generateFileId(result.path);
+          await saveDraft(draftId, result.content, {
+            name: result.name,
+            hasHandle: !!result.handle,
+            filePath: result.path,
+          });
+          if (result.handle) {
+            await saveHandle(draftId, result.handle as FileSystemFileHandle, result.name);
+          }
+          if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+            await chrome.storage.local.set({
+              'mdnote-pending-open': {
+                draftId,
+                name: result.name,
+                path: result.path,
+                createdAt: Date.now(),
+              },
+            });
+          }
+          await openEditorInNewTab();
+        } catch (err) {
+          console.error('[MDnote] Failed to hand off file to new tab:', err);
+          showToast('Failed to open in new tab', 'error');
+        }
         return;
       }
 
@@ -132,6 +171,14 @@ export function useFileOps() {
       setDirty(false);
       setSaveState('disk-saved');
 
+      // 插件版：记录到最近文件（#3：拖拽/草稿恢复打开的文件也要能在最近列表找回）
+      if (isExtension) {
+        const { generateFileId } = await import('../lib/platform');
+        const { addRecent } = await import('../lib/indexeddb');
+        const draftId = generateFileId(name);
+        addRecent(draftId, name, false, content.length).catch(() => {});
+      }
+
       const { setViewMode } = useAppStore.getState();
       setViewMode('preview');
 
@@ -150,16 +197,21 @@ export function useFileOps() {
   /**
    * Create new blank document.
    * 桌面版：当前窗口有内容时开新窗口
-   * 插件版：直接重置当前标签页
+   * 插件版：当前窗口有文档时开新标签页（#4，不替换当前内容）；欢迎页/空文档时直接新建
    */
   const newDocument = useCallback(async () => {
-    if (isDesktop && shouldOpenNewWindow()) {
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const theme = useAppStore.getState().theme;
-        await invoke('create_new_window', { theme });
-      } catch (err) {
-        console.error('[MDnote] Failed to create new window:', err);
+    if (shouldOpenNewWindow()) {
+      if (isDesktop) {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          const theme = useAppStore.getState().theme;
+          await invoke('create_new_window', { theme });
+        } catch (err) {
+          console.error('[MDnote] Failed to create new window:', err);
+        }
+      } else {
+        // 插件版：开新标签页（空白编辑器），当前窗口内容不受影响
+        await openEditorInNewTab();
       }
       return;
     }

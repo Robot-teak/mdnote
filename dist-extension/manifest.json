@@ -21,6 +21,20 @@
     "service_worker": "background.js",
     "type": "module"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "file://*/*.md",
+        "file://*/*.markdown",
+        "http://*/*.md",
+        "http://*/*.markdown",
+        "https://*/*.md",
+        "https://*/*.markdown"
+      ],
+      "js": ["content-md.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "permissions": [
     "storage",
     "downloads",

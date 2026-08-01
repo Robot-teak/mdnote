@@ -20,6 +20,7 @@ import Toolbar from './components/Toolbar';
 import TocSidebar from './components/TocSidebar';
 import PreviewPane from './components/PreviewPane';
 import Onboarding from './components/Onboarding';
+import DraftRecoveryBar from './components/DraftRecoveryBar';
 
 // platform 抽象层
 import {
@@ -319,6 +320,54 @@ function AppInner() {
   const { openFile, openFileByContent, newDocument, saveAs, directSave, updatePreview } = useFileOps();
   const { saveNow } = useAutoSave();
 
+  // 插件版：新标签页恢复"待打开文件"（#1 内容脚本接管 .md / #4 New·Open 多标签页）
+  useEffect(() => {
+    if (!isExtension || !hydrated) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
+        const res = await chrome.storage.local.get('mdnote-pending-open');
+        const pending = res['mdnote-pending-open'] as
+          | { draftId?: string; name?: string; content?: string; path?: string }
+          | undefined;
+        if (!pending || cancelled) return;
+        await chrome.storage.local.remove('mdnote-pending-open');
+
+        if (pending.draftId) {
+          // #4：从 IndexedDB 恢复内容 + 句柄
+          const { getDraft, getHandle } = await import('./lib/indexeddb');
+          const draft = await getDraft(pending.draftId);
+          const h = await getHandle(pending.draftId);
+          if (!draft || cancelled) return;
+          const state = useAppStore.getState();
+          state.setContent(draft.content);
+          state.setFilePath(pending.path ?? draft.meta.filePath ?? draft.meta.name);
+          state.setFileHandle(h?.handle ?? null);
+          state.setDraftId(pending.draftId);
+          state.setDirty(false);
+          state.setSaveState('disk-saved');
+          state.setViewMode('preview');
+          const { renderMarkdown, extractTocFromWorker } = await import('./lib/markdown-parser');
+          const [html, toc] = await Promise.all([
+            renderMarkdown(draft.content),
+            extractTocFromWorker(draft.content),
+          ]);
+          state.setHtmlPreview(html);
+          state.setTocItems(toc);
+        } else if (typeof pending.content === 'string') {
+          // #1：内容脚本读取的 .md 文件内容
+          await openFileByContent(pending.content, pending.name || 'Opened File.md');
+        }
+      } catch (err) {
+        console.error('[MDnote] Pending open restore failed:', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, openFileByContent]);
+
   useUnsavedConfirm();
   useShortcuts({ onSave: saveNow });
 
@@ -453,6 +502,9 @@ function AppInner() {
     <div className="app-container" data-view-mode={viewMode} data-theme={theme}>
       {/* 工具栏 */}
       <Toolbar onSave={handleSave} hasFile={!!filePath} isDirty={isDirty} onAboutOpen={setAboutOpen} onSettingsOpen={setSettingsOpen} />
+
+      {/* 草稿恢复提示条（#3，插件版欢迎页） */}
+      {isExtension && isWelcome && <DraftRecoveryBar />}
 
       <div className="main-area">
         {/* TOC 侧栏 */}

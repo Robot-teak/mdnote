@@ -1860,3 +1860,70 @@ html, body, #root {
 .settings-close-btn:hover {
   background: var(--mf-accent-hover);
 }
+
+/* ─── 草稿恢复提示条（#3） ─── */
+.draft-recovery-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  margin: 8px 16px 0;
+  border: 1px solid var(--mf-border, #d0d7de);
+  border-radius: 8px;
+  background: var(--mf-bg-secondary, #f6f8fa);
+  font-size: 13px;
+  line-height: 1.4;
+  flex-wrap: wrap;
+}
+
+.draft-recovery-icon {
+  font-size: 15px;
+}
+
+.draft-recovery-text {
+  flex: 1;
+  min-width: 200px;
+}
+
+.draft-recovery-time {
+  color: var(--mf-text-secondary, #666);
+  margin-left: 4px;
+}
+
+.draft-recovery-hint {
+  display: block;
+  color: var(--mf-text-secondary, #888);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.draft-recovery-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.draft-recovery-btn {
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--mf-border, #d0d7de);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mf-text, #222);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.draft-recovery-btn:hover {
+  background: var(--mf-bg-hover, #eaeef2);
+}
+
+.draft-recovery-btn.primary {
+  background: var(--mf-accent, #2563eb);
+  border-color: var(--mf-accent, #2563eb);
+  color: #fff;
+}
+
+.draft-recovery-btn.primary:hover {
+  background: var(--mf-accent-hover, #1d4ed8);
+}

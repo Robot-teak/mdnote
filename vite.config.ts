@@ -15,7 +15,7 @@ function copyExtensionStaticFiles() {
     name: 'copy-extension-static',
     writeBundle() {
       const outDir = resolve(__dirname, 'dist-extension');
-      const filesToCopy = ['manifest.json', 'theme-init.js', 'error-handler.js'];
+      const filesToCopy = ['manifest.json', 'theme-init.js', 'error-handler.js', 'content-md.js'];
       for (const file of filesToCopy) {
         const src = resolve(__dirname, file);
         if (existsSync(src)) {

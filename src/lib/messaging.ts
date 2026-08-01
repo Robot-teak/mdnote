@@ -26,6 +26,10 @@ export const MessageType = {
   FILE_LOCK_ACQUIRE: 'file-lock-acquire',
   FILE_LOCK_RELEASE: 'file-lock-release',
   FILE_LOCK_QUERY: 'file-lock-query',
+  /** 请求 background 打开新的编辑器标签页（#4 多标签页：New/Open 不替换当前窗口） */
+  OPEN_EDITOR_TAB: 'open-editor-tab',
+  /** 查询标签页是否存活（#5 文件锁：锁主标签页已关闭时清锁） */
+  TAB_ALIVE: 'tab-alive',
 } as const;
 
 /** 标签页间消息 */
@@ -91,6 +95,43 @@ export function onMessage(handler: MessageHandler): () => void {
   return () => chrome.runtime.onMessage.removeListener(listener);
 }
 
+/**
+ * 请求 background 打开新的编辑器标签页（#4）。
+ * 当前窗口已加载文档时，New/Open 不替换当前内容，而是另开标签页。
+ */
+export async function openEditorInNewTab(): Promise<void> {
+  if (!isExtension || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
+    return;
+  }
+  try {
+    await chrome.runtime.sendMessage({ type: MessageType.OPEN_EDITOR_TAB });
+  } catch {
+    // 忽略
+  }
+}
+
+/**
+ * 查询标签页是否仍存活（#5 文件锁）。
+ * 通过 background 的 chrome.tabs.get 判断锁主标签页是否已关闭，
+ * 已关闭则锁视为失效（可清理/覆盖）。
+ * @param tabId 要查询的标签页 ID
+ * @returns 标签页是否存活；查询失败返回 false
+ */
+export async function queryTabAlive(tabId: number): Promise<boolean> {
+  if (!isExtension || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage || tabId < 0) {
+    return true; // 无法查询时保守返回 true（不误清锁）
+  }
+  try {
+    const res = (await chrome.runtime.sendMessage({
+      type: MessageType.TAB_ALIVE,
+      payload: { tabId },
+    })) as { ok?: boolean; alive?: boolean } | undefined;
+    return res?.ok ? !!res.alive : true;
+  } catch {
+    return true;
+  }
+}
+
 // ──────────────────────────────────────────────
 // 文件锁协议（S19）
 // ──────────────────────────────────────────────
@@ -149,7 +190,16 @@ export async function acquireFileLock(fileId: string): Promise<boolean> {
       if (existing.tabId === currentTabId) {
         return true;
       }
-      // 已被其他标签页锁定 → 检查是否过期（30 分钟超时）
+      // 已被其他标签页锁定 → 检查锁主标签页是否仍存活（#5）
+      // 标签页已关闭但锁未释放（如浏览器异常退出、beforeunload 未触发）时，清锁并重新获取
+      if (existing.tabId >= 0) {
+        const alive = await queryTabAlive(existing.tabId);
+        if (!alive) {
+          await chrome.storage.session.remove(key);
+          return acquireFileLock(fileId);
+        }
+      }
+      // 检查是否过期（30 分钟超时）
       const now = Date.now();
       if (now - existing.acquiredAt > 30 * 60 * 1000) {
         // 过期锁，强制获取
@@ -212,6 +262,15 @@ export async function isFileLocked(fileId: string): Promise<boolean> {
 
     if (!existing) return false;
     if (existing.tabId === currentTabId) return false; // 自己持有，不算被锁
+
+    // 检查锁主标签页是否仍存活（#5）：已关闭则清锁，视为未锁定
+    if (existing.tabId >= 0) {
+      const alive = await queryTabAlive(existing.tabId);
+      if (!alive) {
+        await chrome.storage.session.remove(key).catch(() => {});
+        return false;
+      }
+    }
 
     // 检查过期
     const now = Date.now();

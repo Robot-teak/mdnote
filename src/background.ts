@@ -32,10 +32,19 @@ const MessageType = {
   RECENT_UPDATE: 'recent-update',
   OPEN_FILE: 'open-file',
   GET_STATE: 'get-state',
+  OPEN_EDITOR_TAB: 'open-editor-tab',
+  TAB_ALIVE: 'tab-alive',
+  MD_FILE_OPEN: 'md-file-open',
 } as const;
 
 /** 右键菜单 ID */
 const CONTEXT_MENU_ID = 'mdnote-open-editor';
+
+/** 文件锁 key 前缀（与 messaging.ts 保持一致，S19） */
+const FILE_LOCK_PREFIX = 'file-lock:';
+
+/** 待打开文件暂存 key（#1 内容脚本 / #4 新标签页打开文件共用） */
+const PENDING_OPEN_KEY = 'mdnote-pending-open';
 
 // ──────────────────────────────────────────────
 // 1. 工具栏图标点击 → 打开编辑器标签页
@@ -127,6 +136,50 @@ chrome.runtime.onMessage.addListener(
         return true; // 异步响应
       }
 
+      case MessageType.OPEN_EDITOR_TAB: {
+        // #4 多标签页：请求打开新的编辑器标签页（New/Open 不替换当前窗口）
+        chrome.tabs.create({ url: EDITOR_URL }).then((tab) => {
+          sendResponse({ ok: true, tabId: tab.id });
+        });
+        return true; // 异步响应
+      }
+
+      case MessageType.TAB_ALIVE: {
+        // #5 文件锁：查询锁主标签页是否仍存活（tabs.get 不需要 tabs 权限）
+        const tabId = (msg.payload as { tabId?: number } | undefined)?.tabId;
+        if (typeof tabId !== 'number' || tabId < 0) {
+          sendResponse({ ok: true, alive: false });
+          return false;
+        }
+        chrome.tabs.get(tabId)
+          .then(() => sendResponse({ ok: true, alive: true }))
+          .catch(() => sendResponse({ ok: true, alive: false }));
+        return true; // 异步响应
+      }
+
+      case MessageType.MD_FILE_OPEN: {
+        // #1 内容脚本接管：浏览器打开 .md 文件时，把文件内容暂存并打开编辑器
+        const payload = msg.payload as { name?: string; content?: string; url?: string } | undefined;
+        if (payload && typeof payload.content === 'string') {
+          chrome.storage.local
+            .set({
+              [PENDING_OPEN_KEY]: {
+                name: payload.name || 'Opened File.md',
+                content: payload.content,
+                fromUrl: true,
+                url: payload.url || '',
+                createdAt: Date.now(),
+              },
+            })
+            .then(() => chrome.tabs.create({ url: EDITOR_URL }))
+            .then((tab) => sendResponse({ ok: true, tabId: tab.id }))
+            .catch(() => sendResponse({ ok: false, error: 'storage write failed' }));
+          return true; // 异步响应
+        }
+        sendResponse({ ok: false, error: 'no content' });
+        break;
+      }
+
       case MessageType.GET_STATE: {
         // 查询状态：从 chrome.storage 读取持久化状态
         chrome.storage.local.get(['mdnote-recent', 'mdnote-settings'], (result) => {
@@ -148,7 +201,37 @@ chrome.runtime.onMessage.addListener(
 );
 
 // ──────────────────────────────────────────────
-// 4. 右键菜单
+// 4. 标签页关闭 → 清理该标签页持有的文件锁（#5）
+// ──────────────────────────────────────────────
+
+/**
+ * 监听标签页关闭（tabs.onRemoved 不需要 tabs 权限）。
+ * 标签页关闭时立即清除其持有的所有文件锁，
+ * 避免"窗口已关闭但文件仍显示只读"的误报（原 30 分钟超时太慢）。
+ */
+chrome.tabs.onRemoved.addListener((tabId: number) => {
+  try {
+    chrome.storage.session.get(null).then((all) => {
+      const keysToRemove: string[] = [];
+      for (const [key, value] of Object.entries(all)) {
+        if (key.startsWith(FILE_LOCK_PREFIX)) {
+          const record = value as { tabId?: number };
+          if (record.tabId === tabId) {
+            keysToRemove.push(key);
+          }
+        }
+      }
+      if (keysToRemove.length > 0) {
+        chrome.storage.session.remove(keysToRemove).catch(() => {});
+      }
+    }).catch(() => {});
+  } catch {
+    // 忽略
+  }
+});
+
+// ──────────────────────────────────────────────
+// 5. 右键菜单
 // ──────────────────────────────────────────────
 
 /**

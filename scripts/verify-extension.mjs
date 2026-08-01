@@ -85,6 +85,7 @@ function checkManifest() {
       'version',
       'action',
       'background',
+      'content_scripts',
       'permissions',
     ];
 
@@ -155,6 +156,7 @@ console.log('');
 console.log('3. Static scripts:');
 checkFile('theme-init.js', 'Theme initializer');
 checkFile('error-handler.js', 'Error handler');
+checkFile('content-md.js', 'Content script (md file takeover)');
 console.log('');
 
 console.log('4. Icons:');
