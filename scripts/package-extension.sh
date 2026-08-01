@@ -27,6 +27,7 @@ echo "  ✓ sample.md removed"
 echo ""
 echo "=== Packaging extension v${VERSION} ==="
 mkdir -p output
+rm -f "${OUTPUT}"
 cd dist-extension
 zip -9 -r "../${OUTPUT}" . -x "*.DS_Store"
 cd ..
