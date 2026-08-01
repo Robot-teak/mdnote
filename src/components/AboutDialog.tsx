@@ -43,7 +43,10 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
     setUpdateResult(null);
     try {
       const resp = await fetch(GITHUB_RELEASES_API);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => '');
+        throw new Error(`HTTP ${resp.status}: ${body.slice(0, 200)}`);
+      }
       const releases = await resp.json();
 
       const myReleases = releases.filter(
