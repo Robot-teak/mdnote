@@ -158,9 +158,8 @@ chrome.runtime.onMessage.addListener(
       }
 
       case MessageType.MD_FILE_OPEN: {
-        // #1 内容脚本接管：浏览器打开 .md 文件时，暂存内容并响应 ok。
-        // content script 收到确认后用 location.replace 跳转到编辑器，
-        // 不再由 background 创建新标签页（避免纯文本标签页残留）。
+        // #1 内容脚本接管：浏览器打开 .md 文件时，暂存内容、打开编辑器标签页、
+        // 然后关闭原来的纯文本标签页（避免残留）。
         const payload = msg.payload as { name?: string; content?: string; url?: string } | undefined;
         if (payload && typeof payload.content === 'string') {
           chrome.storage.local
@@ -173,7 +172,14 @@ chrome.runtime.onMessage.addListener(
                 createdAt: Date.now(),
               },
             })
-            .then(() => sendResponse({ ok: true }))
+            .then(() => chrome.tabs.create({ url: EDITOR_URL }))
+            .then((tab) => {
+              // Close the original plain-text .md tab
+              if (senderTabId !== undefined) {
+                chrome.tabs.remove(senderTabId).catch(() => {});
+              }
+              sendResponse({ ok: true, tabId: tab.id });
+            })
             .catch(() => sendResponse({ ok: false, error: 'storage write failed' }));
           return true; // 异步响应
         }

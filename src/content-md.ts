@@ -61,12 +61,8 @@
 
       if (!res || !res.ok) {
         console.warn('[MDnote] Failed to open in editor:', res?.error || 'no response');
-        return;
       }
-
-      // Navigate current tab to editor (instead of opening a new tab),
-      // so the plain-text view is replaced rather than leaving a leftover tab.
-      location.replace(chrome.runtime.getURL('editor.html'));
+      // Background will open editor tab and close this plain-text tab
     } catch (err) {
       console.warn('[MDnote] Auto-open failed:', err);
     }

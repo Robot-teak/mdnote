@@ -3,7 +3,7 @@ import { isExtension } from '../lib/platform';
 import { openUrl } from '../lib/platform';
 
 // 插件版独立版本线（v0.1.8 起，不沿用桌面版版本号）；桌面版沿用各自版本
-const CURRENT_VERSION = isExtension ? '0.1.8' : '0.4.1';
+const CURRENT_VERSION = isExtension ? '0.1.9' : '0.4.1';
 const TAG_PREFIX = isExtension ? 'extension-v' : 'desktop-v';
 const GITHUB_REPO = 'https://github.com/Robot-teak/mdnote';
 const GITHUB_AUTHOR = 'https://github.com/Robot-teak';
