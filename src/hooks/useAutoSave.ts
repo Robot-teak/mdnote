@@ -14,8 +14,6 @@ import { isExtension, writeFile } from '../lib/platform';
  */
 export function useAutoSave() {
   const autoSaveEnabled = useAppStore((s) => s.autoSaveEnabled);
-  const filePath = useAppStore((s) => s.filePath);
-  const fileHandle = useAppStore((s) => s.fileHandle);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastSavedHash = useRef<string>('');
 
@@ -156,18 +154,11 @@ export function useAutoSave() {
       intervalRef.current = null;
     }
 
-    // 插件版：只要有内容就自动保存草稿（不需要 filePath）
-    // 桌面版：需要 filePath 才保存
-    const shouldAutoSave = isExtension
-      ? (autoSaveEnabled && useAppStore.getState().content.length > 0)
-      : (autoSaveEnabled && !!filePath);
+    if (!autoSaveEnabled) return;
 
-    if (!shouldAutoSave) return;
-
-    // 开启时立即保存一次
-    performSave();
-
-    // 之后每 60 秒保存一次
+    // 定时器常驻：每 60s 检查一次（performSave 内部通过 contentHash 跳过
+    // 空内容/重复内容）。不依赖 filePath/content——新建文档输入内容后
+    // 也能在下一个周期自动保存（修复：new 后 interval 被清导致草稿不保存）
     intervalRef.current = setInterval(performSave, AUTO_SAVE_INTERVAL);
 
     return () => {
@@ -176,7 +167,7 @@ export function useAutoSave() {
         intervalRef.current = null;
       }
     };
-  }, [autoSaveEnabled, filePath, fileHandle, performSave]);
+  }, [autoSaveEnabled, performSave]);
 
   return { saveNow };
 }

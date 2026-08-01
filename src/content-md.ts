@@ -137,10 +137,21 @@ const md: MarkdownIt = new MarkdownIt({
       btn.disabled = true;
       btn.textContent = '打开中…';
       try {
-        const content = originalContent ?? (await fetch(location.href, { cache: 'no-store' }).then((r) => {
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          return r.text();
-        }));
+        // 优先用渲染时读取的内容；否则重新读取（fetch 失败时用页面纯文本兜底）
+        let content = originalContent;
+        if (content === null) {
+          try {
+            const resp = await fetch(location.href, { cache: 'no-store' });
+            if (resp.ok) content = await resp.text();
+          } catch {
+            // ignore
+          }
+          if (!content) {
+            content = document.body?.innerText || document.body?.textContent || '';
+          }
+        }
+        if (!content) throw new Error('cannot read file content');
+
         const name = path.split('/').pop() || 'Opened File.md';
         const res = await chrome.runtime.sendMessage({
           type: 'md-file-open',
@@ -215,12 +226,31 @@ const md: MarkdownIt = new MarkdownIt({
     document.title = (path.split('/').pop() || 'Markdown').replace(/\.(md|markdown|mdown|mkd)$/i, '');
   }
 
+  /** 读取页面 Markdown 内容 */
+  async function readPageContent(): Promise<string> {
+    // 优先 fetch（http/https 同源读取；file:// 已授权时部分可用）
+    try {
+      const resp = await fetch(location.href, { cache: 'no-store' });
+      if (resp.ok) {
+        const text = await resp.text();
+        if (text && text.trim().length > 0) return text;
+      }
+    } catch {
+      // fall through
+    }
+    // 兜底：file:// 等 fetch 受 CORS 限制时，读取 Chrome 已渲染的纯文本
+    // （本地 .md 以 text/plain 显示，document.body 里就是原文）
+    const bodyText = document.body?.innerText || document.body?.textContent || '';
+    if (bodyText && bodyText.trim().length > 0) {
+      return bodyText;
+    }
+    throw new Error('cannot read file content');
+  }
+
   // 主流程：读取 → 渲染 → 按钮（渲染失败降级为仅按钮）
   (async () => {
     try {
-      const resp = await fetch(location.href, { cache: 'no-store' });
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      originalContent = await resp.text();
+      originalContent = await readPageContent();
       renderPage(originalContent);
     } catch (err) {
       console.warn('[MDnote] Auto-render failed, button-only mode:', err);

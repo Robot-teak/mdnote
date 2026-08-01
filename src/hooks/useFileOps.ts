@@ -253,11 +253,17 @@ export function useFileOps() {
       // 插件版：保存句柄到 IndexedDB
       if (isExtension && result.handle) {
         const { generateFileId } = await import('../lib/platform');
-        const { saveHandle, addRecent } = await import('../lib/indexeddb');
-        const draftId = useAppStore.getState().draftId || generateFileId(result.path);
+        const { saveHandle, addRecent, deleteDraft, deleteHandle } = await import('../lib/indexeddb');
+        const oldDraftId = useAppStore.getState().draftId;
+        const draftId = oldDraftId || generateFileId(result.path);
         setDraftId(draftId);
         saveHandle(draftId, result.handle as FileSystemFileHandle, result.name).catch(() => {});
         addRecent(draftId, result.name, true, useAppStore.getState().content.length).catch(() => {});
+        // 保存成功后清理旧草稿（如新建 Untitled 文档的临时草稿，#3 用户要求）
+        if (oldDraftId && oldDraftId !== draftId) {
+          deleteDraft(oldDraftId).catch(() => {});
+          deleteHandle(oldDraftId).catch(() => {});
+        }
       }
 
       showToast('File saved!', 'success');
