@@ -1,55 +1,135 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { AUTO_SAVE_INTERVAL } from '../lib/constants';
+import { isExtension, writeFile } from '../lib/platform';
 
 /**
  * Auto-save hook.
- * Only active when autoSaveEnabled is true.
- * When first enabled: saves immediately once, then every 60s.
- * Only saves when isDirty && filePath exists.
- * Does NOT re-trigger on every content change.
+ *
+ * 双产物线：
+ * - 插件版：IndexedDB 草稿自动保存（60s 间隔，无感无需授权）+ 显式"保存到磁盘"用 platform.writeFile
+ * - 桌面版：60s invoke('write_file') 写原文件（保留原逻辑）
+ *
+ * 三态状态数据层（Q26）：dirty / draft-saved / disk-saved，供 StatusBar UI 展示。
  */
 export function useAutoSave() {
   const autoSaveEnabled = useAppStore((s) => s.autoSaveEnabled);
   const filePath = useAppStore((s) => s.filePath);
+  const fileHandle = useAppStore((s) => s.fileHandle);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastSavedHash = useRef<string>('');
 
-  /** 实时从 store 读取状态并保存 — 不依赖 content，不会因打字而重建 */
-  const performSave = useCallback(async () => {
+  /**
+   * 插件版：保存草稿到 IndexedDB（无感，无需用户授权）。
+   */
+  const saveDraftToIndexedDB = useCallback(async () => {
     const state = useAppStore.getState();
-    if (!state.filePath || !state.isDirty) return;
+    if (!state.content) return;
 
     // 用内容哈希跳过重复保存
     const contentHash = state.content.length + ':' + state.content.slice(0, 64);
     if (contentHash === lastSavedHash.current) return;
 
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('write_file', { path: state.filePath, content: state.content });
+      const { saveDraft, addRecent } = await import('../lib/indexeddb');
+      const { generateFileId } = await import('../lib/platform');
+
+      // 使用已有 draftId 或生成新的（以路径为种子，确保确定性、避免重复记录）
+      let draftId = state.draftId;
+      if (!draftId) {
+        draftId = generateFileId(state.filePath || state.fileName);
+        state.setDraftId(draftId);
+      }
+
+      await saveDraft(draftId, state.content, {
+        name: state.fileName,
+        hasHandle: !!state.fileHandle,
+        filePath: state.filePath || undefined,
+      });
+
       lastSavedHash.current = contentHash;
-      state.setDirty(false);
+      // 更新保存状态：草稿已保存到 IndexedDB（磁盘文件未更新，始终为 draft-saved）
+      state.setSaveState('draft-saved');
+
+      // 更新最近文件列表
+      addRecent(draftId, state.fileName, !!state.fileHandle, state.content.length).catch(() => {});
     } catch (err) {
-      console.error('[AutoSave] Failed:', err);
+      console.error('[AutoSave/Draft] Failed:', err);
+      // IndexedDB 失败不影响编辑，状态保持 dirty
     }
   }, []);
 
-  /** 手动保存（⌘S）— Bug 2 修复：即使 isDirty 为 false 也执行保存 */
+  /**
+   * 桌面版：保存到磁盘文件（原逻辑）。
+   */
+  const performDesktopSave = useCallback(async () => {
+    const state = useAppStore.getState();
+    if (!state.filePath || !state.isDirty) return;
+
+    const contentHash = state.content.length + ':' + state.content.slice(0, 64);
+    if (contentHash === lastSavedHash.current) return;
+
+    try {
+      await writeFile(state.filePath, state.content);
+      lastSavedHash.current = contentHash;
+      state.setDirty(false);
+      state.setSaveState('disk-saved');
+    } catch (err) {
+      console.error('[AutoSave/Desktop] Failed:', err);
+    }
+  }, []);
+
+  /** 自动保存执行函数（根据模式切换） */
+  const performSave = useCallback(async () => {
+    if (isExtension) {
+      await saveDraftToIndexedDB();
+    } else {
+      await performDesktopSave();
+    }
+  }, [saveDraftToIndexedDB, performDesktopSave]);
+
+  /**
+   * 手动保存（⌘S）— 即使 isDirty 为 false 也执行保存。
+   * 插件版：有句柄写磁盘，无句柄保存草稿
+   * 桌面版：写磁盘文件
+   */
   const saveNow = useCallback(async () => {
     const state = useAppStore.getState();
+    if (isExtension) {
+      // 插件版：有句柄 → 写磁盘；无句柄 → 保存草稿
+      if (state.fileHandle) {
+        try {
+          await writeFile(state.fileHandle, state.content);
+          const contentHash = state.content.length + ':' + state.content.slice(0, 64);
+          lastSavedHash.current = contentHash;
+          state.setDirty(false);
+          state.setSaveState('disk-saved');
+          state.setDiskWriteFailed(false); // 清除失败标志
+        } catch (err) {
+          // Q21 降级：权限失效 → 保存草稿
+          console.error('[Save] Disk save failed, falling back to draft:', err);
+          state.setDiskWriteFailed(true); // 标记磁盘写入失败（S22 区分正常草稿保存与权限失效）
+          await saveDraftToIndexedDB();
+        }
+      } else {
+        // 无句柄 → 保存草稿
+        await saveDraftToIndexedDB();
+      }
+      return;
+    }
+
+    // 桌面版
     if (!state.filePath) return;
-    // Bug 2 修复：不再检查 isDirty，总是执行保存
-    // 这样用户在"已保存"状态下按 ⌘S 也能确认保存
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('write_file', { path: state.filePath, content: state.content });
+      await writeFile(state.filePath, state.content);
       const contentHash = state.content.length + ':' + state.content.slice(0, 64);
       lastSavedHash.current = contentHash;
       state.setDirty(false);
+      state.setSaveState('disk-saved');
     } catch (err) {
       console.error('[Save] Failed:', err);
     }
-  }, []);
+  }, [saveDraftToIndexedDB]);
 
   useEffect(() => {
     if (intervalRef.current) {
@@ -57,7 +137,13 @@ export function useAutoSave() {
       intervalRef.current = null;
     }
 
-    if (!autoSaveEnabled || !filePath) return;
+    // 插件版：只要有内容就自动保存草稿（不需要 filePath）
+    // 桌面版：需要 filePath 才保存
+    const shouldAutoSave = isExtension
+      ? (autoSaveEnabled && useAppStore.getState().content.length > 0)
+      : (autoSaveEnabled && !!filePath);
+
+    if (!shouldAutoSave) return;
 
     // 开启时立即保存一次
     performSave();
@@ -71,7 +157,7 @@ export function useAutoSave() {
         intervalRef.current = null;
       }
     };
-  }, [autoSaveEnabled, filePath, performSave]);
+  }, [autoSaveEnabled, filePath, fileHandle, performSave]);
 
   return { saveNow };
 }

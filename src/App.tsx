@@ -1,14 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useAppStore } from './store/useAppStore';
+import { useAppStore, useHydrated, onHydrated, hydrateFromStorage } from './store/useAppStore';
 import './styles/globals.css';
 
 // 安全组件
 import WelcomeScreen from './components/WelcomeScreen';
 import AboutDialog from './components/AboutDialog';
+import SettingsDialog from './components/SettingsDialog';
 import { ToastProvider, useToast } from './components/Toast';
 import StatusBar from './components/StatusBar';
 
-// hooks（内部已用动态 import @tauri-apps/api）
+// hooks
 import { useFileOps } from './hooks/useFileOps';
 import { useAutoSave } from './hooks/useAutoSave';
 import { useUnsavedConfirm } from './hooks/useUnsavedConfirm';
@@ -18,6 +19,19 @@ import { useShortcuts } from './hooks/useShortcuts';
 import Toolbar from './components/Toolbar';
 import TocSidebar from './components/TocSidebar';
 import PreviewPane from './components/PreviewPane';
+import Onboarding from './components/Onboarding';
+
+// platform 抽象层
+import {
+  isExtension,
+  isDesktop,
+  readFile,
+  setWindowTitle,
+  setupFileOpenListener,
+  setupAboutListener,
+  readClipboard,
+  writeClipboard,
+} from './lib/platform';
 
 // ─── EditorPane 懒加载（CodeMirror 564KB）───
 
@@ -60,31 +74,33 @@ class AppErrorBoundary extends React.Component<
   }
 }
 
-// ─── 通过文件路径打开文件的公共方法 ───
+// ─── 通过文件路径打开文件（桌面版） / 通过内容打开（插件版）───
 
-// Bug 1 修复：去重机制，防止同一文件在短时间内被重复打开
 let lastOpenFilePath = '';
 let lastOpenFileTime = 0;
 
+/**
+ * 通过文件路径打开文件（桌面版）。
+ * 插件版不使用此函数（使用 openFileByContent）。
+ */
 async function openFileByPath(path: string) {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
     // 去掉 file:// 前缀和可能的引号
     let cleanPath = path;
     if (cleanPath.startsWith('file://')) {
       cleanPath = decodeURIComponent(cleanPath.replace('file://', ''));
     }
-    // macOS file:///path → /path（三个斜杠变一个）
     cleanPath = cleanPath.replace(/^\/+/, '/');
-    // Tauri event payload 可能带引号
     cleanPath = cleanPath.replace(/^"|"$/g, '');
 
-    // Bug 1 修复：2秒内同一路径的去重
+    // 2秒内同一路径的去重
     const now = Date.now();
     if (cleanPath === lastOpenFilePath && now - lastOpenFileTime < 2000) {
       console.log('[MDnote] Skipping duplicate file open:', cleanPath);
-      // 清除 pending file 防止轮询再次触发
-      invoke('get_pending_file').catch(() => {});
+      if (isDesktop) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        invoke('get_pending_file').catch(() => {});
+      }
       return;
     }
     lastOpenFilePath = cleanPath;
@@ -92,27 +108,27 @@ async function openFileByPath(path: string) {
 
     console.log('[MDnote] Opening file from path:', cleanPath);
 
-    // F2 fix: 如果当前窗口有内容，在新窗口中打开文件
-    // 但如果当前窗口正在编辑的就是这个文件，直接提到前台
+    // 桌面版：当前窗口有内容 → 在新窗口打开
     const { useAppStore: store } = await import('./store/useAppStore');
     const state = store.getState();
-    if (state.filePath === cleanPath) {
-      // 同一个文件，已经在当前窗口打开，无需重复操作
-      return;
-    }
+    if (state.filePath === cleanPath) return;
+
     const hasContent = !state.isWelcome && (state.filePath !== null || state.content.length > 0);
-    if (hasContent) {
+    if (hasContent && isDesktop) {
       const theme = state.theme;
+      const { invoke } = await import('@tauri-apps/api/core');
       await invoke('open_file_in_new_window', { path: cleanPath, theme });
       return;
     }
 
-    const fileContent = await invoke<string>('read_file', { path: cleanPath });
+    // 使用 platform.readFile 读取文件
+    const fileContent = await readFile(cleanPath);
     const { renderMarkdown, extractTocFromWorker } = await import('./lib/markdown-parser');
 
     store.getState().setFilePath(cleanPath);
     store.getState().setContent(fileContent);
     store.getState().setDirty(false);
+    store.getState().setSaveState('disk-saved');
     store.getState().setViewMode('preview');
 
     const [html, tocItems] = await Promise.all([
@@ -127,22 +143,34 @@ async function openFileByPath(path: string) {
 }
 
 // ─── 更新窗口标题 ───
+
 async function updateWindowTitle(filePath: string | null, isDirty: boolean) {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
     let title = 'MDnote';
     if (filePath) {
-      // 提取文件名（只显示文件名，不要后面的 -MDnote）
       const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'Untitled';
       title = `${fileName}${isDirty ? ' ●' : ''}`;
     }
-    await invoke('set_window_title', { title });
+    await setWindowTitle(title);
   } catch (err) {
     console.error('[MDnote] Failed to update window title:', err);
   }
 }
 
-// ─── AppInner: 所有业务逻辑在这里（在 ToastProvider 内部）───
+// ─── AppInner: 所有业务逻辑 ───
+
+function applySettingsToCSS(settings: {
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  previewParagraphSpacing: string;
+}): void {
+  const root = document.documentElement;
+  root.style.setProperty('--editor-font-family', `'${settings.fontFamily}', Menlo, monospace`);
+  root.style.setProperty('--editor-font-size', `${settings.fontSize}px`);
+  root.style.setProperty('--editor-line-height', String(settings.lineHeight));
+  root.style.setProperty('--preview-paragraph-spacing', settings.previewParagraphSpacing);
+}
 
 function AppInner() {
   const viewMode = useAppStore((s) => s.viewMode);
@@ -150,27 +178,49 @@ function AppInner() {
   const isWelcome = useAppStore((s) => s.isWelcome);
   const filePath = useAppStore((s) => s.filePath);
   const isDirty = useAppStore((s) => s.isDirty);
+  const settings = useAppStore((s) => s.settings);
   const { showToast } = useToast();
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // 注册全局函数，供 Rust 端 window.eval() 调用
+  // 插件版：hydrate 阻塞渲染（S0-3 结论）
+  const [hydrated, setHydrated] = useState(useHydrated());
   useEffect(() => {
+    if (!hydrated) {
+      const unsub = onHydrated(() => setHydrated(true));
+      return unsub;
+    }
+  }, [hydrated]);
+
+  // 插件版：启动时触发异步 hydrate
+  useEffect(() => {
+    if (isExtension) {
+      hydrateFromStorage();
+    }
+  }, []);
+
+  // Global: apply settings CSS variables
+  useEffect(() => {
+    applySettingsToCSS(settings);
+  }, [settings]);
+
+  // 桌面版：注册全局函数供 Rust eval() 调用
+  useEffect(() => {
+    if (!isDesktop) return;
+
     (window as any).__openFileByPath = (path: string) => {
       console.log('[MDnote] __openFileByPath called from Rust eval:', path);
       openFileByPath(path);
     };
 
-    // Bug 5/6 修复：注册 Edit 菜单命令处理函数
-    // macOS Edit 菜单事件通过 Rust eval() 调用此函数
+    // macOS Edit 菜单事件处理
     (window as any).__handleEditCommand = async (cmd: string) => {
       const active = document.activeElement as HTMLElement;
 
-      // 对 input/textarea 元素执行编辑命令
       if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
         if (cmd === 'paste') {
           try {
-            const { invoke } = await import('@tauri-apps/api/core');
-            const text = await invoke<string>('read_clipboard');
+            const text = await readClipboard();
             const input = active as HTMLInputElement;
             const start = input.selectionStart || 0;
             const end = input.selectionEnd || 0;
@@ -196,7 +246,7 @@ function AppInner() {
         return;
       }
 
-      // 对 CM6 编辑器执行编辑命令
+      // CM6 编辑器命令
       const cmEl = document.querySelector('.cm-editor') as any;
       if (cmEl && cmEl.cmView) {
         const view = cmEl.cmView.view;
@@ -207,8 +257,7 @@ function AppInner() {
             if (from !== to) {
               const text = view.state.sliceDoc(from, to);
               try {
-                const { invoke } = await import('@tauri-apps/api/core');
-                await invoke('write_clipboard', { text });
+                await writeClipboard(text);
               } catch {
                 navigator.clipboard.writeText(text).catch(() => {});
               }
@@ -219,8 +268,7 @@ function AppInner() {
             if (from !== to) {
               const text = view.state.sliceDoc(from, to);
               try {
-                const { invoke } = await import('@tauri-apps/api/core');
-                await invoke('write_clipboard', { text });
+                await writeClipboard(text);
               } catch {
                 navigator.clipboard.writeText(text).catch(() => {});
               }
@@ -230,8 +278,7 @@ function AppInner() {
           }
           case 'paste': {
             try {
-              const { invoke } = await import('@tauri-apps/api/core');
-              const text = await invoke<string>('read_clipboard');
+              const text = await readClipboard();
               view.dispatch({
                 changes: { from: view.state.selection.main.from, insert: text },
               });
@@ -268,143 +315,82 @@ function AppInner() {
     };
   }, []);
 
-  // ─── F2: 新窗口 URL 参数处理 ───
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const filePath = params.get('file');
-    const themeParam = params.get('theme');
-    if (themeParam === 'dark' || themeParam === 'light') {
-      useAppStore.getState().setTheme(themeParam);
-    }
-    if (filePath) {
-      const cleanPath = decodeURIComponent(filePath);
-      console.log('[MDnote] Opening file from URL param:', cleanPath);
-      openFileByPath(cleanPath);
-    }
-  }, []);
-
-  // ─── 监听 macOS 原生 About 菜单事件 ───
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        unlisten = await listen('show-about-dialog', () => {
-          setAboutOpen(true);
-        });
-      } catch (e) {
-        console.warn('[MDnote] Could not listen for show-about-dialog:', e);
-      }
-    })();
-    return () => { unlisten?.(); };
-  }, []);
-
-  // 所有 hooks 正常调用
-  const { openFile, newDocument, saveAs, directSave, updatePreview } = useFileOps();
+  // 获取 file ops（含 openFileByContent 用于插件版）
+  const { openFile, openFileByContent, newDocument, saveAs, directSave, updatePreview } = useFileOps();
   const { saveNow } = useAutoSave();
 
   useUnsavedConfirm();
-
   useShortcuts({ onSave: saveNow });
 
-  // ─── 监听 macOS 文件关联打开事件 ───
+  // 文件打开监听（双产物线：platform.setupFileOpenListener）
   useEffect(() => {
     let mounted = true;
+    let cleanup: (() => void) | null = null;
 
-    async function setupFileOpenListener() {
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        
-        // 1. 立即查询 pending file（应用刚通过"打开方式"启动时）
-        const pendingFile = await invoke<string | null>('get_pending_file').catch(() => null);
-        if (pendingFile && mounted) {
-          console.log('[MDnote] Found pending file on startup:', pendingFile);
-          openFileByPath(pendingFile);
-        }
+    setupFileOpenListener((pathOrContent: string, isContent: boolean) => {
+      if (!mounted) return;
+      if (isContent) {
+        // 插件版：通过内容打开
+        openFileByContent(pathOrContent, 'Opened File.md');
+      } else {
+        // 桌面版：通过路径打开
+        openFileByPath(pathOrContent);
+      }
+    }).then((fn) => {
+      cleanup = fn;
+    }).catch((err) => {
+      console.warn('[MDnote] File open listener setup failed:', err);
+    });
 
-        // 2. 注册 emit 事件监听（应用已在运行时，再打开新文件）
+    // 桌面版：检查启动参数
+    if (isDesktop) {
+      (async () => {
         try {
-          const tauri = (window as any).__TAURI__;
-
-          // Bug 1 修复：事件处理后立即清除 PENDING_FILE，防止轮询重复触发
-          if (tauri?.event?.listen) {
-            await tauri.event.listen('open-file-path', (event: any) => {
-              if (!mounted) return;
-              const payload = event.payload;
-              console.log('[MDnote] Received open-file-path event:', payload);
-              if (payload) {
-                // 立即清除 pending file，防止轮询再取到同一个路径
-                invoke('get_pending_file').catch(() => {});
-                openFileByPath(String(payload));
-              }
-            });
-          } else {
-            const { listen } = await import('@tauri-apps/api/event');
-            await listen<string>('open-file-path', (event) => {
-              if (!mounted) return;
-              // 立即清除 pending file，防止轮询再取到同一个路径
-              invoke('get_pending_file').catch(() => {});
-              if (event.payload) openFileByPath(event.payload);
-            });
-          }
-        } catch (e) {
-          console.warn('[MDnote] Could not set up event listener:', e);
-        }
-
-        // 3. 轮询检查（每2秒，最多10次）—— 作为 emit 事件的兜底
-        let pollCount = 0;
-        const MAX_POLL_COUNT = 10;
-        const pollInterval = setInterval(async () => {
-          if (!mounted) { clearInterval(pollInterval); return; }
-          pollCount++;
-          if (pollCount > MAX_POLL_COUNT) {
-            console.log('[MDnote] Poll limit reached, stopping polling');
-            clearInterval(pollInterval);
-            return;
-          }
-          try {
-            const file = await invoke<string | null>('get_pending_file').catch(() => null);
-            if (file && mounted) {
-              console.log('[MDnote] Poll found pending file:', file);
-              clearInterval(pollInterval); // 找到文件后停止轮询
-              openFileByPath(file);
-            }
-          } catch {}
-        }, 2000);
-
-        // 4. 监听拖拽文件
-        try {
-          const { listen } = await import('@tauri-apps/api/event');
-          await listen<string[]>('tauri://file-drop', (event) => {
-            if (!mounted) return;
-            const files = event.payload;
-            if (files && files.length > 0) {
-              const file = files[0];
-              if (file.endsWith('.md') || file.endsWith('.markdown') || file.endsWith('.txt') || file.endsWith('.mkd')) {
-                openFileByPath(file);
+          const { invoke } = await import('@tauri-apps/api/core');
+          const args = await invoke<string[]>('get_cli_args').catch(() => null);
+          if (args && args.length > 1) {
+            for (let i = 1; i < args.length; i++) {
+              const arg = args[i];
+              if (arg.endsWith('.md') || arg.endsWith('.markdown') || arg.endsWith('.txt')) {
+                openFileByPath(arg);
+                break;
               }
             }
-          });
+          }
         } catch {}
+      })();
+    }
 
-        // 5. 检查启动参数
-        const args = await invoke<string[]>('get_cli_args').catch(() => null);
-        if (args && args.length > 1 && !pendingFile) {
-          for (let i = 1; i < args.length; i++) {
-            const arg = args[i];
-            if (arg.endsWith('.md') || arg.endsWith('.markdown') || arg.endsWith('.txt')) {
-              openFileByPath(arg);
-              break;
-            }
-          }
-        }
-      } catch (e) {
-        console.error('[MDnote] setupFileOpenListener failed:', e);
+    // 桌面版：URL 参数处理（F2 新窗口）
+    if (isDesktop) {
+      const params = new URLSearchParams(window.location.search);
+      const filePathParam = params.get('file');
+      const themeParam = params.get('theme');
+      if (themeParam === 'dark' || themeParam === 'light') {
+        useAppStore.getState().setTheme(themeParam);
+      }
+      if (filePathParam) {
+        const cleanPath = decodeURIComponent(filePathParam);
+        console.log('[MDnote] Opening file from URL param:', cleanPath);
+        openFileByPath(cleanPath);
       }
     }
 
-    setupFileOpenListener();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+      cleanup?.();
+    };
+  }, []);
+
+  // About 对话框监听（双产物线：platform.setupAboutListener）
+  useEffect(() => {
+    let cleanup: (() => void) | null = null;
+    setupAboutListener(() => {
+      setAboutOpen(true);
+    }).then((fn) => {
+      cleanup = fn;
+    }).catch(() => {});
+    return () => cleanup?.();
   }, []);
 
   // 监听文件路径和脏状态变化，更新窗口标题
@@ -431,11 +417,18 @@ function AppInner() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleContentChange = useCallback((newContent: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    // 修复问题3：在防抖开始时保存预览区滚动位置（此时 DOM 仍为旧内容，scrollTop 是正确的）
     const scrollEl = document.querySelector('.preview-pane');
     const currentScrollTop = scrollEl ? scrollEl.scrollTop : 0;
     const { setSavedScrollTop } = useAppStore.getState();
     setSavedScrollTop(currentScrollTop);
+
+    // 更新脏状态
+    const state = useAppStore.getState();
+    if (!state.isDirty) {
+      state.setDirty(true);
+      state.setSaveState('dirty');
+    }
+
     debounceRef.current = setTimeout(() => {
       updatePreview(newContent);
     }, 150);
@@ -447,14 +440,23 @@ function AppInner() {
     window.dispatchEvent(new CustomEvent('preview:scroll-to-heading', { detail: { line } }));
   }, []);
 
+  // 插件版：hydrate 未完成时显示加载界面
+  if (isExtension && !hydrated) {
+    return (
+      <div className="app-container" data-theme={theme} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
+        <div style={{ color: '#999', fontSize: 14 }}>Loading MDnote…</div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-container" data-view-mode={viewMode} data-theme={theme}>
       {/* 工具栏 */}
-      <Toolbar onSave={handleSave} hasFile={!!filePath} isDirty={isDirty} onAboutOpen={setAboutOpen} />
+      <Toolbar onSave={handleSave} hasFile={!!filePath} isDirty={isDirty} onAboutOpen={setAboutOpen} onSettingsOpen={setSettingsOpen} />
 
       <div className="main-area">
         {/* TOC 侧栏 */}
-        <TocSidebar onHeadingClick={handleTocJump} />
+        <TocSidebar onHeadingClick={handleTocJump} onOpenFile={openFile} onOpenFileByContent={openFileByContent} />
 
         {/* 主内容 */}
         <main className="editor-preview-container">
@@ -481,8 +483,14 @@ function AppInner() {
 
       <StatusBar />
 
-      {/* About Dialog — 从 Toolbar 或 macOS 菜单触发 */}
+      {/* About Dialog */}
       {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)} />}
+
+      {/* Settings Dialog */}
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+
+      {/* Onboarding 首次引导（仅插件版） */}
+      <Onboarding />
     </div>
   );
 }

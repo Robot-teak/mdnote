@@ -1,15 +1,41 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
+import { isExtension } from '../lib/platform';
+import { releaseAllLocks } from '../lib/messaging';
 
 /**
- * Hook to prevent window close when there are unsaved changes.
- * Uses Tauri's onCloseRequested event + Rust confirm_close command.
+ * Hook to prevent window/tab close when there are unsaved changes.
+ *
+ * 双产物线：
+ * - 插件版：window.addEventListener('beforeunload') 拦截标签页关闭
+ * - 桌面版：Tauri onCloseRequested + Rust confirm_close（原逻辑保留）
+ *
+ * 插件版在 beforeunload 时同时释放所有文件锁（S19）。
  */
 export function useUnsavedConfirm() {
   const isDirty = useAppStore((s) => s.isDirty);
   const unlistenRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
+    // ─── 插件版：beforeunload 拦截 ───
+    if (isExtension) {
+      const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+        // 释放所有文件锁（S19）
+        releaseAllLocks().catch(() => {});
+
+        if (isDirty) {
+          e.preventDefault();
+          e.returnValue = '';
+        }
+      };
+
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      return () => {
+        window.removeEventListener('beforeunload', handleBeforeUnload);
+      };
+    }
+
+    // ─── 桌面版：Tauri onCloseRequested + beforeunload 安全网 ───
     let cancelled = false;
 
     (async () => {
@@ -33,16 +59,13 @@ export function useUnsavedConfirm() {
           // 阻止默认关闭行为
           event.preventDefault();
 
-          // 使用 Rust 端的 confirm_close（已用 spawn_blocking 避免死锁）
           try {
             const { invoke } = await import('@tauri-apps/api/core');
             const confirmed = await invoke<boolean>('confirm_close', { hasUnsavedChanges: dirty });
             if (confirmed) {
-              // 用户确认关闭 → 强制销毁窗口
               try {
                 await currentWindow.destroy();
               } catch (destroyErr) {
-                // destroy 失败，尝试 close
                 console.warn('[useUnsavedConfirm] destroy failed, trying close:', destroyErr);
                 try {
                   await currentWindow.close();
@@ -51,9 +74,7 @@ export function useUnsavedConfirm() {
                 }
               }
             }
-            // 用户取消 → 什么都不做，窗口保持打开
           } catch (invokeErr) {
-            // Rust 命令失败，用 window.confirm 回退
             console.warn('[useUnsavedConfirm] confirm_close failed:', invokeErr);
             if (window.confirm('You have unsaved changes. Close anyway?')) {
               try {
@@ -76,7 +97,7 @@ export function useUnsavedConfirm() {
       }
     })();
 
-    // Also listen for beforeunload as safety net
+    // beforeunload safety net (桌面版也保留)
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (isDirty) {
         e.preventDefault();

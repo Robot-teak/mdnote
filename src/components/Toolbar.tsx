@@ -3,6 +3,7 @@ import { useAppStore } from '../store/useAppStore';
 import type { ViewMode } from '../types';
 import { useToast } from './Toast';
 import { useFileOps } from '../hooks/useFileOps';
+import { isExtension } from '../lib/platform';
 
 interface ToolbarProps {
   onSave?: () => void | Promise<void>;
@@ -10,13 +11,14 @@ interface ToolbarProps {
   hasFile?: boolean;
   isDirty?: boolean;
   onAboutOpen?: (open: boolean) => void;
+  onSettingsOpen?: (open: boolean) => void;
 }
 
 /**
  * Top toolbar with view mode toggle buttons,
  * theme switch, export menu, and save button.
  */
-export default function Toolbar({ onSave, hasFile = false, isDirty = false, onAboutOpen }: ToolbarProps) {
+export default function Toolbar({ onSave, hasFile = false, isDirty = false, onAboutOpen, onSettingsOpen }: ToolbarProps) {
   const {
     viewMode, setViewMode,
     theme, toggleTheme,
@@ -68,13 +70,30 @@ export default function Toolbar({ onSave, hasFile = false, isDirty = false, onAb
       const { content: mdContent } = useAppStore.getState();
       const html = await exportAsHTML(mdContent, theme);
 
-      const { invoke } = await import('@tauri-apps/api/core');
-      const path = await invoke<string | null>('save_dialog', { defaultName: 'document.html' });
-      if (path) {
-        // Bug8 修复：确保文件后缀是 .html
-        const htmlPath = path.replace(/\.(md|markdown|txt)$/i, '.html');
-        await invoke('write_file', { path: htmlPath, content: html });
+      if (isExtension) {
+        // 插件版：Blob + chrome.downloads.download
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        if (typeof chrome !== 'undefined' && chrome.downloads) {
+          await chrome.downloads.download({
+            url,
+            filename: 'document.html',
+            saveAs: true,
+          });
+        } else {
+          // 降级：打开新窗口
+          window.open(url, '_blank');
+        }
+        // 延迟释放（下载需要时间）
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
         showToast('HTML exported!', 'success');
+      } else {
+        // 桌面版：save_dialog + write_file
+        const { saveDialog } = await import('../lib/platform');
+        const result = await saveDialog(html, { suggestedName: 'document.html' });
+        if (result) {
+          showToast('HTML exported!', 'success');
+        }
       }
     } catch (err) {
       console.error('[MDnote] Export HTML failed:', err);
@@ -82,17 +101,16 @@ export default function Toolbar({ onSave, hasFile = false, isDirty = false, onAb
     }
   }, [theme, showToast]);
 
-  // 导出 PDF：先生成带打印样式的 HTML，保存为临时文件，用系统浏览器打开让用户打印为 PDF
+  // 导出 PDF：插件版用 window.print()；桌面版用原 invoke('export_pdf')
   const handleExportPDF = useCallback(async () => {
     setExportDropdownOpen(false);
     try {
       const { exportAsHTML } = await import('../lib/markdown-parser');
-      const { invoke } = await import('@tauri-apps/api/core');
       const { content: mdContent, theme: currentTheme } = useAppStore.getState();
-      
+
       // 生成带打印样式的完整 HTML
       const html = await exportAsHTML(mdContent, currentTheme);
-      
+
       // 添加打印专用 CSS
       const printHtml = html.replace(
         '</head>',
@@ -104,10 +122,24 @@ export default function Toolbar({ onSave, hasFile = false, isDirty = false, onAb
         </style></head>`
       );
 
-      // 调用 Rust 端导出：打开浏览器打印对话框
-      await invoke('export_pdf', { html: printHtml, outputPath: 'unused' });
-      // 准确提示：已在浏览器中打开，用户可在浏览器中选择"Save as PDF"
-      showToast('Opened in browser — use Print → Save as PDF', 'info');
+      if (isExtension) {
+        // 插件版：打开新窗口 + 调用 print
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+          printWindow.document.write(printHtml);
+          printWindow.document.close();
+          printWindow.focus();
+          setTimeout(() => printWindow.print(), 300);
+          showToast('Print dialog opened — use Save as PDF', 'info');
+        } else {
+          showToast('Please allow popups to export PDF', 'warning');
+        }
+      } else {
+        // 桌面版：调用 Rust 端导出
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('export_pdf', { html: printHtml, outputPath: 'unused' });
+        showToast('Opened in browser — use Print → Save as PDF', 'info');
+      }
     } catch (err) {
       console.error('[MDnote] Export PDF failed:', err);
       showToast('Failed to export PDF: ' + String(err), 'error');
@@ -193,6 +225,17 @@ export default function Toolbar({ onSave, hasFile = false, isDirty = false, onAb
       </div>
 
       <div className="toolbar-right">
+        {/* Settings button */}
+        <button
+          className="toolbar-btn"
+          onClick={() => onSettingsOpen?.(true)}
+          title="Settings"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M6.968 0L6.24 2.676a5.5 5.5 0 00-1.098.634L2.522 2.16.49 5.676l2.058 1.62a5.5 5.5 0 000 1.268L.49 10.184l2.032 3.516 2.62-1.15a5.5 5.5 0 001.098.634L6.968 15.86h2.064l.728-2.676a5.5 5.5 0 001.098-.634l2.62 1.15 2.032-3.516-2.058-1.62a5.5 5.5 0 000-1.268l2.058-1.62-2.032-3.516-2.62 1.15a5.5 5.5 0 00-1.098-.634L9.032 0H6.968zM8 5.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5z"/>
+          </svg>
+        </button>
+
         {/* Theme toggle */}
         <button
           className="toolbar-btn"

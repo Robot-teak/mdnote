@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>S0-1 Worker CSP Spike</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+    h1 { font-size: 1.4rem; }
+    #result { white-space: pre-wrap; font-family: monospace; font-size: 13px; line-height: 1.6;
+              background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 16px; }
+    .ok { color: #1a7f37; } .fail { color: #cf222e; } .info { color: #0969da; }
+  </style>
+</head>
+<body>
+  <h1>S0-1 Worker CSP Spike</h1>
+  <p>Testing <code>new Worker(new URL(...), { type: 'module' })</code> under MV3 CSP <code>worker-src 'self'</code>.</p>
+  <div id="result">Running…</div>
+  <script src="main.js" type="module"></script>
+</body>
+</html>

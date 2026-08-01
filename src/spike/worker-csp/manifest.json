@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "S0-1 Worker CSP Spike",
+  "version": "0.0.1",
+  "description": "Minimal MV3 extension to verify Vite ES Worker under CSP worker-src 'self'",
+  "minimum_chrome_version": "102",
+  "action": {
+    "default_title": "S0-1 Worker CSP Spike"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": [],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; worker-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["index.html", "md-worker.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

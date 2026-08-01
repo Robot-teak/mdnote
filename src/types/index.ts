@@ -4,6 +4,34 @@ export type ViewMode = 'split' | 'editor' | 'preview';
 /** Theme options */
 export type Theme = 'light' | 'dark';
 
+/** Editor settings persisted to localStorage */
+export interface EditorSettings {
+  fontFamily: string;           // 默认 'SF Mono'
+  fontSize: number;             // 默认 14 (px)
+  lineHeight: number;           // 默认 1.5
+  indentUnit: '2spaces' | '4spaces' | 'tab';  // 默认 '2spaces'
+  codeBlockTheme: string;       // 默认 'github'
+  codeBlockThemeManuallySet: boolean;  // 用户是否手动选择过代码块主题
+  previewParagraphSpacing: string; // 默认 '1em'
+  autoWrap: boolean;            // 默认 true
+  showLineNumbers: boolean;     // 默认 true
+  autoThemeFollow: boolean;     // 默认 true
+}
+
+/** Default editor settings */
+export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
+  fontFamily: 'SF Mono',
+  fontSize: 14,
+  lineHeight: 1.5,
+  indentUnit: '2spaces',
+  codeBlockTheme: 'github',
+  codeBlockThemeManuallySet: false,
+  previewParagraphSpacing: '1em',
+  autoWrap: true,
+  showLineNumbers: true,
+  autoThemeFollow: true,
+};
+
 /** Table of Contents item extracted from Markdown headings */
 export interface TocItem {
   id: string;

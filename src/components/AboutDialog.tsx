@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { isExtension } from '../lib/platform';
+import { openUrl } from '../lib/platform';
 
-const CURRENT_VERSION = '0.3.8';
+const CURRENT_VERSION = '0.4.1';
 const GITHUB_REPO = 'https://github.com/Robot-teak/mdnote';
 const GITHUB_AUTHOR = 'https://github.com/Robot-teak';
 const GITHUB_RELEASES_API = 'https://api.github.com/repos/Robot-teak/mdnote/releases/latest';
@@ -54,12 +56,7 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
   }
 
   async function openLink(url: string) {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('open_url', { url });
-    } catch {
-      window.open(url, '_blank');
-    }
+    await openUrl(url);
   }
 
   return (
@@ -69,7 +66,7 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
         <button className="about-close" onClick={onClose} title="Close">✕</button>
 
         {/* Icon & Title */}
-        <img src="/icon.png" alt="MDnote" className="about-icon" />
+        <img src={isExtension ? './icon.png' : '/icon.png'} alt="MDnote" className="about-icon" />
         <h1 className="about-title">MDnote</h1>
         <p className="about-version">Version {CURRENT_VERSION}</p>
 

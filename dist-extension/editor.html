@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MDnote</title>
+    <!--
+      主题初始化：外部脚本（非内联，满足 MV3 CSP script-src 'self'）
+      先用 prefers-color-scheme 同步设置首帧主题，再异步读取 chrome.storage 切换。
+      已知妥协：chrome.storage 异步读取期间可能有一次主题闪烁，无法完全消除。
+    -->
+    <script src="./theme-init.js"></script>
+    <style>
+      /* Inline fallback styles — shows immediately before CSS loads */
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--mf-bg-primary, #fff); color: var(--mf-text-primary, #1a1a2e); }
+      #root { display: flex; flex-direction: column; }
+      /* 暗色模式兜底（CSS变量还没加载时） */
+      [data-theme='dark'] body { background: #1e1e1e; color: #d4d4d4; }
+    </style>
+    <!-- Error handler MUST be before any module scripts (外部引用，满足 MV3 CSP) -->
+    <script src="./error-handler.js"></script>
+    <script type="module" crossorigin src="./assets/editor-BgrTxGD-.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/editor-8-VQU-cM.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

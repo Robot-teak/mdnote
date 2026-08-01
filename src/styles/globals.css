@@ -4,8 +4,17 @@
    ============================================================ */
 
 /* ===== CSS Custom Properties (Light Theme - Default) ===== */
-:root,
-[data-theme='light'] {
+/* NOTE: 只用 :root 定义变量，不要用裸的 [data-theme='light']。
+   因为 App.tsx 给 .app-container 也加了 data-theme 属性，裸属性选择器会
+   匹配到 .app-container，把它内部的 --editor-* 重新盖回默认值，
+   导致 applySettingsToCSS 写在 <html> 上的用户设置对预览子树失效。 */
+:root {
+  /* Editor customization variables */
+  --editor-font-family: 'SF Mono', Menlo, monospace;
+  --editor-font-size: 14px;
+  --editor-line-height: 1.5;
+  --preview-paragraph-spacing: 1em;
+
   /* Backgrounds */
   --mf-bg-primary: #ffffff;
   --mf-bg-secondary: #f5f6f7;
@@ -317,8 +326,9 @@ html, body, #root {
   overflow-y: auto;
   background: var(--mf-bg-primary);
   color: var(--mf-text-primary);
-  font-size: 15px;
-  line-height: 1.75;
+  font-family: var(--editor-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  font-size: var(--editor-font-size, 15px);
+  line-height: var(--editor-line-height, 1.75);
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
@@ -643,6 +653,115 @@ html, body, #root {
   background: var(--mf-bg-primary);
 }
 
+.welcome-recent {
+  padding: 0 12px;
+  margin-bottom: 24px;
+}
+
+.welcome-recent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.welcome-recent-header h3 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--mf-text-secondary);
+}
+
+.recent-clear-btn {
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid var(--mf-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mf-text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.recent-clear-btn:hover {
+  color: var(--mf-accent);
+  border-color: var(--mf-accent);
+}
+
+.recent-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+}
+
+.recent-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+
+.recent-file-btn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid var(--mf-border);
+  border-radius: 8px;
+  background: var(--mf-bg-secondary);
+  color: var(--mf-text-primary);
+  cursor: pointer;
+  font-size: 14px;
+  transition: border-color 0.15s ease;
+}
+
+.recent-file-btn:hover {
+  border-color: var(--mf-accent);
+}
+
+.recent-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.recent-file-time {
+  font-size: 12px;
+  color: var(--mf-text-muted);
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.recent-remove-btn {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--mf-text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.recent-remove-btn:hover {
+  color: #e5484d;
+  background: var(--mf-bg-hover);
+}
+
+.recent-empty {
+  padding: 16px 12px;
+  color: var(--mf-text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
 .welcome-content {
   text-align: center;
   max-width: 480px;
@@ -788,7 +907,7 @@ html, body, #root {
 }
 
 .preview-pane p {
-  margin: 0 0 1em;
+  margin: 0 0 var(--preview-paragraph-spacing);
   color: var(--mf-text-primary);
 }
 
@@ -1499,4 +1618,245 @@ html, body, #root {
 
 .welcome-footer a:hover {
   color: var(--mf-accent);
+}
+
+/* ===== Settings Dialog ===== */
+.settings-dialog {
+  position: relative;
+  background: var(--mf-bg-primary);
+  border-radius: 14px;
+  padding: 28px 32px 20px;
+  width: 460px;
+  max-height: 80vh;
+  overflow-y: auto;
+  text-align: left;
+  box-shadow: var(--mf-shadow-lg);
+  border: 1px solid var(--mf-border);
+}
+
+.settings-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--mf-text-primary);
+  margin: 0 0 20px;
+  text-align: center;
+}
+
+.settings-section {
+  margin-bottom: 20px;
+  border: 1px solid color-mix(in srgb, var(--mf-border) 60%, transparent);
+  border-radius: 8px;
+  padding: 14px 16px 10px;
+}
+
+.settings-section legend {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mf-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+  padding: 0 6px;
+  float: none;
+  width: auto;
+}
+
+.settings-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mf-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 12px;
+  padding: 0;
+  border-bottom: none;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  gap: 16px;
+}
+
+.settings-row + .settings-row {
+  border-top: 1px solid color-mix(in srgb, var(--mf-border) 40%, transparent);
+}
+
+.settings-label {
+  font-size: 13px;
+  color: var(--mf-text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.settings-value-label {
+  font-size: 12px;
+  color: var(--mf-text-muted);
+  margin-left: 4px;
+}
+
+.settings-value {
+  font-size: 12px;
+  color: var(--mf-text-secondary);
+  min-width: 32px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.settings-select {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--mf-border);
+  border-radius: 6px;
+  background: var(--mf-bg-primary);
+  color: var(--mf-text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  min-width: 140px;
+}
+
+.settings-select:focus {
+  border-color: var(--mf-accent);
+}
+
+.settings-select option {
+  background: var(--mf-bg-primary);
+  color: var(--mf-text-primary);
+}
+
+.settings-slider {
+  width: 140px;
+  height: 4px;
+  appearance: none;
+  background: var(--mf-bg-tertiary);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.settings-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--mf-accent);
+  cursor: pointer;
+  border: 2px solid var(--mf-bg-primary);
+  box-shadow: var(--mf-shadow-sm);
+}
+
+.settings-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--mf-accent);
+  cursor: pointer;
+  border: 2px solid var(--mf-bg-primary);
+}
+
+.settings-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--mf-accent);
+}
+
+.settings-hint {
+  font-size: 11px;
+  color: var(--mf-text-muted);
+}
+
+.settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--mf-border);
+}
+
+.settings-reset-btn {
+  height: 32px;
+  padding: 0 16px;
+  border: 1px solid var(--mf-border);
+  border-radius: 6px;
+  background: var(--mf-bg-primary);
+  color: var(--mf-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.settings-reset-btn:hover {
+  background: var(--mf-bg-hover);
+  border-color: var(--mf-accent);
+  color: var(--mf-text-primary);
+}
+
+.settings-btn-secondary {
+  height: 32px;
+  padding: 0 16px;
+  border: 1px solid var(--mf-border);
+  border-radius: 6px;
+  background: var(--mf-bg-primary);
+  color: var(--mf-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.settings-btn-secondary:hover {
+  background: var(--mf-bg-hover);
+  border-color: var(--mf-accent);
+  color: var(--mf-text-primary);
+}
+
+.settings-btn-primary {
+  height: 32px;
+  padding: 0 20px;
+  border: 1px solid var(--mf-accent);
+  border-radius: 6px;
+  background: var(--mf-accent);
+  color: white;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.settings-btn-primary:hover {
+  background: var(--mf-accent-hover);
+}
+
+.settings-row-checkbox {
+  padding: 4px 0;
+}
+
+.settings-close-btn {
+  height: 32px;
+  padding: 0 20px;
+  border: 1px solid var(--mf-accent);
+  border-radius: 6px;
+  background: var(--mf-accent);
+  color: white;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.settings-close-btn:hover {
+  background: var(--mf-accent-hover);
 }
