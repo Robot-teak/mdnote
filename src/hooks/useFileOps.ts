@@ -158,24 +158,25 @@ export function useFileOps() {
   }, [setContent, setFilePath, setFileHandle, setDraftId, setDirty, setSaveState, setHtmlPreview, setIsPreviewLoading, setTocItems, showToast]);
 
   /**
-   * 通过内容打开文件（插件版拖拽 / chrome.runtime.onMessage）。
+   * 通过内容打开文件（插件版拖拽 / chrome.runtime.onMessage / 浏览器 .md 接管）。
    * @param content 文件内容
    * @param name 文件名
+   * @param path 可选完整路径（浏览器打开的 file:// 等），用于左下角路径显示
    */
-  const openFileByContent = useCallback(async (content: string, name: string) => {
+  const openFileByContent = useCallback(async (content: string, name: string, path?: string) => {
     try {
       setIsPreviewLoading(true);
-      setFilePath(name);
+      setFilePath(path ?? name);
       setContent(content);
       setFileHandle(null);
       setDirty(false);
-      setSaveState('disk-saved');
+      setSaveState(path ? 'clean' : 'disk-saved');
 
       // 插件版：记录到最近文件（#3：拖拽/草稿恢复打开的文件也要能在最近列表找回）
       if (isExtension) {
         const { generateFileId } = await import('../lib/platform');
         const { addRecent } = await import('../lib/indexeddb');
-        const draftId = generateFileId(name);
+        const draftId = generateFileId(path ?? name);
         addRecent(draftId, name, false, content.length).catch(() => {});
       }
 
@@ -220,6 +221,13 @@ export function useFileOps() {
       const currentDraftId = useAppStore.getState().draftId;
       if (currentDraftId) {
         await releaseFileLock(currentDraftId).catch(() => {});
+        // 用户规则 3：新建文档（无本地路径）被放弃时，清理其临时草稿
+        const prev = useAppStore.getState();
+        if (prev.filePath === null) {
+          const { deleteDraft, deleteHandle } = await import('../lib/indexeddb');
+          deleteDraft(currentDraftId).catch(() => {});
+          deleteHandle(currentDraftId).catch(() => {});
+        }
       }
     }
     resetState();

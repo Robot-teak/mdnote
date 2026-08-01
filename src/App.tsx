@@ -329,7 +329,7 @@ function AppInner() {
         if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
         const res = await chrome.storage.local.get('mdnote-pending-open');
         const pending = res['mdnote-pending-open'] as
-          | { draftId?: string; name?: string; content?: string; path?: string }
+          | { draftId?: string; name?: string; content?: string; path?: string; url?: string }
           | undefined;
         if (!pending || cancelled) return;
         await chrome.storage.local.remove('mdnote-pending-open');
@@ -356,8 +356,16 @@ function AppInner() {
           state.setHtmlPreview(html);
           state.setTocItems(toc);
         } else if (typeof pending.content === 'string') {
-          // #1：内容脚本读取的 .md 文件内容
-          await openFileByContent(pending.content, pending.name || 'Opened File.md');
+          // #1：内容脚本读取的 .md 文件内容（从 URL 解析完整路径供左下角显示）
+          let fullPath: string | undefined;
+          if (typeof pending.url === 'string' && pending.url.startsWith('file://')) {
+            try {
+              fullPath = decodeURIComponent(pending.url.replace('file://', ''));
+            } catch {
+              fullPath = undefined;
+            }
+          }
+          await openFileByContent(pending.content, pending.name || 'Opened File.md', fullPath);
         }
       } catch (err) {
         console.error('[MDnote] Pending open restore failed:', err);
