@@ -176,5 +176,17 @@ export function useAutoSave() {
     };
   }, [autoSaveEnabled, performSave]);
 
-  return { saveNow };
+  // 内容变化后快速保存（防抖 3s）：避免等待 60s 周期——编辑后停顿几秒即落盘/存草稿，
+  // 刷新或关闭标签页时内容基本已保存（performSave 内部有 isDirty + contentHash 检查，无修改不动作）
+  const quickSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleQuickSave = useCallback(() => {
+    if (!autoSaveEnabled) return;
+    if (quickSaveTimer.current) clearTimeout(quickSaveTimer.current);
+    quickSaveTimer.current = setTimeout(() => {
+      quickSaveTimer.current = null;
+      performSave();
+    }, 3000);
+  }, [autoSaveEnabled, performSave]);
+
+  return { saveNow, scheduleQuickSave };
 }

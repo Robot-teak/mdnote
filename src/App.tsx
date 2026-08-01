@@ -318,8 +318,8 @@ function AppInner() {
 
   // 获取 file ops（含 openFileByContent 用于插件版）
   const { openFile, openFileByContent, newDocument, saveAs, directSave, updatePreview } = useFileOps();
-  // 自动保存定时器（快捷键保存统一走 handleSave，见下）
-  useAutoSave();
+  // 自动保存：60s 周期 + 内容变化后 3s 快速保存（快捷键保存统一走 handleSave，见下）
+  const { scheduleQuickSave } = useAutoSave();
 
   // 插件版：新标签页恢复"待打开文件"（#1 内容脚本接管 .md / #4 New·Open 多标签页）
   useEffect(() => {
@@ -496,7 +496,10 @@ function AppInner() {
     debounceRef.current = setTimeout(() => {
       updatePreview(newContent);
     }, 150);
-  }, [updatePreview]);
+
+    // 内容变化 → 3s 后快速自动保存（草稿/写盘），防刷新丢内容（performSave 内部有 isDirty 检查）
+    scheduleQuickSave();
+  }, [updatePreview, scheduleQuickSave]);
 
   // TOC 点击跳转
   const handleTocJump = useCallback((line: number) => {
