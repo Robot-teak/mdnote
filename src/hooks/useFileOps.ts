@@ -158,26 +158,27 @@ export function useFileOps() {
   }, [setContent, setFilePath, setFileHandle, setDraftId, setDirty, setSaveState, setHtmlPreview, setIsPreviewLoading, setTocItems, showToast]);
 
   /**
-   * 通过内容打开文件（插件版拖拽 / chrome.runtime.onMessage / 浏览器 .md 接管）。
+   * 通过内容打开文件（插件版拖拽 / chrome.runtime.onMessage / 浏览器 .md 接管 / 最近文件恢复）。
    * @param content 文件内容
    * @param name 文件名
    * @param path 可选完整路径（浏览器打开的 file:// 等），用于左下角路径显示
+   * @param handle 可选磁盘句柄（最近文件恢复时绑定，保存可直接写回原文件）
    */
-  const openFileByContent = useCallback(async (content: string, name: string, path?: string) => {
+  const openFileByContent = useCallback(async (content: string, name: string, path?: string, handle?: unknown) => {
     try {
       setIsPreviewLoading(true);
       setFilePath(path ?? name);
       setContent(content);
-      setFileHandle(null);
+      setFileHandle(handle ?? null);
       setDirty(false);
-      setSaveState(path ? 'clean' : 'disk-saved');
+      setSaveState('disk-saved');
 
       // 插件版：记录到最近文件（#3：拖拽/草稿恢复打开的文件也要能在最近列表找回）
       if (isExtension) {
         const { generateFileId } = await import('../lib/platform');
         const { addRecent } = await import('../lib/indexeddb');
         const draftId = generateFileId(path ?? name);
-        addRecent(draftId, name, false, content.length).catch(() => {});
+        addRecent(draftId, name, !!handle, content.length).catch(() => {});
       }
 
       const { setViewMode } = useAppStore.getState();
@@ -241,8 +242,9 @@ export function useFileOps() {
    * Save As: show dialog, then write to chosen location.
    * 插件版：showSaveFilePicker + createWritable
    * 桌面版：invoke('save_dialog') + invoke('write_file')
+   * @returns 是否保存成功（用户取消返回 false）
    */
-  const saveAs = useCallback(async () => {
+  const saveAs = useCallback(async (): Promise<boolean> => {
     try {
       const fileName =
         useAppStore.getState().fileName !== 'Untitled'
@@ -250,7 +252,7 @@ export function useFileOps() {
           : 'untitled.md';
 
       const result = await saveDialog(useAppStore.getState().content, { suggestedName: fileName });
-      if (!result) return;
+      if (!result) return false; // 用户取消
 
       // 更新 store
       setFilePath(result.path);
@@ -274,13 +276,14 @@ export function useFileOps() {
         }
       }
 
-      showToast('File saved!', 'success');
+      return true;
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
-        return; // 用户取消
+        return false; // 用户取消
       }
       console.error('[MDnote] saveAs failed:', err);
       showToast('Failed to save file: ' + String(err), 'error');
+      return false;
     }
   }, [setFilePath, setFileHandle, setDraftId, setDirty, setSaveState, showToast]);
 
@@ -310,9 +313,9 @@ export function useFileOps() {
           useAppStore.getState().setDiskWriteFailed(false); // S22: 清除失败标志
           return true;
         }
-        // 无句柄 → 另存为
-        await saveAs();
-        return true;
+        // 无句柄 → 另存为（结果传给上层：取消时不提示"Saved!"）
+        const ok = await saveAs();
+        return ok;
       }
 
       // 桌面版

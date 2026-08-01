@@ -11,7 +11,7 @@ interface TocSidebarProps {
   onHeadingClick?: (line: number) => void;
   /** 首页最近文件恢复（插件版） */
   onOpenFile?: () => void;
-  onOpenFileByContent?: (content: string, name: string) => void;
+  onOpenFileByContent?: (content: string, name: string, path?: string, handle?: unknown) => void;
 }
 
 type SidebarTab = 'toc' | 'find';
@@ -49,14 +49,17 @@ export default function TocSidebar({ onHeadingClick, onOpenFile, onOpenFileByCon
     };
   }, [isHomeExtension]);
 
-  // 点击最近文件：读取草稿内容恢复；失败则降级为文件选择器
+  // 点击最近文件：读取草稿内容恢复（绑定磁盘句柄，保存可直接写回）；失败则降级为文件选择器
   const handleOpenRecent = useCallback(
     async (file: RecentItem) => {
       try {
-        const { getDraft } = await import('../lib/indexeddb');
+        const { getDraft, getHandle } = await import('../lib/indexeddb');
         const draft = await getDraft(file.id);
         if (draft && draft.content) {
-          onOpenFileByContent?.(draft.content, file.name);
+          // 有句柄则绑定（最近恢复的文件保存时直接写回原文件，不弹另存为）
+          const h = await getHandle(file.id).catch(() => null);
+          const handle = h?.handle ?? null;
+          onOpenFileByContent?.(draft.content, file.name, draft.meta.filePath, handle);
           return;
         }
       } catch {

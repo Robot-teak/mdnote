@@ -318,7 +318,8 @@ function AppInner() {
 
   // 获取 file ops（含 openFileByContent 用于插件版）
   const { openFile, openFileByContent, newDocument, saveAs, directSave, updatePreview } = useFileOps();
-  const { saveNow } = useAutoSave();
+  // 自动保存定时器（快捷键保存统一走 handleSave，见下）
+  useAutoSave();
 
   // 插件版：新标签页恢复"待打开文件"（#1 内容脚本接管 .md / #4 New·Open 多标签页）
   useEffect(() => {
@@ -377,7 +378,9 @@ function AppInner() {
   }, [hydrated, openFileByContent]);
 
   useUnsavedConfirm();
-  useShortcuts({ onSave: saveNow });
+  // 快捷键保存走 handleSave（与工具栏一致：有句柄写回、无句柄另存为）
+  // 注意：不能直接用 saveNow——它无句柄时只存草稿，与工具栏保存行为不一致
+  // useShortcuts({ onSave: saveNow });（移到 handleSave 定义之后）
 
   // 文件打开监听（双产物线：platform.setupFileOpenListener）
   useEffect(() => {
@@ -458,11 +461,17 @@ function AppInner() {
   // 智能保存
   const handleSave = useCallback(async () => {
     try {
+      let ok = false;
       if (filePath) {
-        await directSave();
+        ok = await directSave();
+      } else {
+        ok = await saveAs();
+      }
+      // 用户取消保存时不提示"Saved!"（问题 3：取消后不应显示已保存）
+      if (ok) {
         showToast('Saved!', 'success');
       } else {
-        await saveAs();
+        showToast('Save cancelled', 'info');
       }
     } catch (err) {
       console.error('[MDnote] Save failed:', err);
@@ -470,7 +479,12 @@ function AppInner() {
     }
   }, [filePath, directSave, saveAs, showToast]);
 
+  // 快捷键保存（与工具栏行为一致）
+  useShortcuts({ onSave: handleSave });
+
   // 内容变化 → 预览+TOC 更新（150ms 防抖）
+  // 注意：不要在这里 setDirty——dirty 只由 EditorPane 的 updateListener（用户编辑）
+  // 设置。否则打开文件/切换视图模式挂载编辑器时会误置"未保存"。
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleContentChange = useCallback((newContent: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -478,13 +492,6 @@ function AppInner() {
     const currentScrollTop = scrollEl ? scrollEl.scrollTop : 0;
     const { setSavedScrollTop } = useAppStore.getState();
     setSavedScrollTop(currentScrollTop);
-
-    // 更新脏状态
-    const state = useAppStore.getState();
-    if (!state.isDirty) {
-      state.setDirty(true);
-      state.setSaveState('dirty');
-    }
 
     debounceRef.current = setTimeout(() => {
       updatePreview(newContent);
