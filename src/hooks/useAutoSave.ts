@@ -20,7 +20,9 @@ export function useAutoSave() {
   const lastSavedHash = useRef<string>('');
 
   /**
-   * 插件版：保存草稿到 IndexedDB（无感，无需用户授权）。
+   * 插件版：自动保存。
+   * 1) 有磁盘句柄且权限有效 → 直接写回原文件（用户期望"自动保存=保存到原文件"）
+   * 2) 无句柄/写盘失败 → 降级保存草稿到 IndexedDB（权限过期时提示重新授权）
    */
   const saveDraftToIndexedDB = useCallback(async () => {
     const state = useAppStore.getState();
@@ -31,7 +33,6 @@ export function useAutoSave() {
     if (contentHash === lastSavedHash.current) return;
 
     try {
-      const { saveDraft, addRecent } = await import('../lib/indexeddb');
       const { generateFileId } = await import('../lib/platform');
 
       // 使用已有 draftId 或生成新的（以路径为种子，确保确定性、避免重复记录）
@@ -41,6 +42,24 @@ export function useAutoSave() {
         state.setDraftId(draftId);
       }
 
+      // 有句柄 → 尝试直接写回磁盘原文件（用户期望：自动保存 = 保存到原文件）
+      if (state.fileHandle) {
+        try {
+          await writeFile(state.fileHandle, state.content);
+          lastSavedHash.current = contentHash;
+          state.setDirty(false);
+          state.setSaveState('disk-saved');
+          state.setDiskWriteFailed(false);
+          return; // 磁盘已保存，无需再存草稿
+        } catch (err) {
+          // 写盘失败（权限过期/被占用等）→ 降级草稿 + 标记磁盘写入失败
+          console.warn('[AutoSave] Disk write failed, falling back to draft:', err);
+          state.setDiskWriteFailed(true);
+        }
+      }
+
+      // 降级：保存草稿到 IndexedDB
+      const { saveDraft, addRecent } = await import('../lib/indexeddb');
       await saveDraft(draftId, state.content, {
         name: state.fileName,
         hasHandle: !!state.fileHandle,
@@ -48,7 +67,7 @@ export function useAutoSave() {
       });
 
       lastSavedHash.current = contentHash;
-      // 更新保存状态：草稿已保存到 IndexedDB（磁盘文件未更新，始终为 draft-saved）
+      // 更新保存状态：草稿已保存到 IndexedDB（磁盘文件未更新，为 draft-saved）
       state.setSaveState('draft-saved');
 
       // 更新最近文件列表

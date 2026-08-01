@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MDnote",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "A clean Markdown editor for Chrome — edit, preview, and export with live rendering.",
   "minimum_chrome_version": "102",
   "icons": {
