@@ -7,7 +7,7 @@ const CURRENT_VERSION = isExtension ? '0.1.9' : '0.4.1';
 const TAG_PREFIX = isExtension ? 'extension-v' : 'desktop-v';
 const GITHUB_REPO = 'https://github.com/Robot-teak/mdnote';
 const GITHUB_AUTHOR = 'https://github.com/Robot-teak';
-const VERSION_URL = 'https://raw.githubusercontent.com/Robot-teak/mdnote/main/version.json';
+const GITHUB_RELEASES_API = 'https://api.github.com/repos/Robot-teak/mdnote/releases?per_page=30';
 
 interface AboutDialogProps {
   onClose: () => void;
@@ -42,28 +42,29 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
     setChecking(true);
     setUpdateResult(null);
     try {
-      // Fetch version.json (plain static file, avoids GitHub API rate limits and 403 issues)
-      const resp = await fetch(VERSION_URL, { cache: 'no-store' });
+      const resp = await fetch(GITHUB_RELEASES_API);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const latest = await resp.json();
-      const key = isExtension ? 'extension' : 'desktop';
-      const latestVersion: string = latest[key] || '0.0.0';
-      const releaseFilter = isExtension ? 'extension-v' : 'desktop-v';
-      const htmlUrl = `${GITHUB_REPO}/releases?q=${releaseFilter}`;
+      const releases = await resp.json();
+
+      const myReleases = releases.filter(
+        (r: { tag_name: string }) => r.tag_name && r.tag_name.startsWith(TAG_PREFIX)
+      );
+
+      if (myReleases.length === 0) {
+        setUpdateResult({ hasUpdate: false, message: `No releases for ${TAG_PREFIX}*` });
+        setChecking(false);
+        return;
+      }
+
+      const latest = myReleases[0];
+      const latestVersion = latest.tag_name.replace(/^[a-z]+-v/, '');
+      const htmlUrl = latest.html_url;
 
       if (compareVersions(latestVersion, CURRENT_VERSION) > 0) {
-        setUpdateResult({
-          hasUpdate: true,
-          latestVersion,
-          message: `New version v${latestVersion} available!`,
-        });
+        setUpdateResult({ hasUpdate: true, latestVersion, message: `New version v${latestVersion} available!` });
         await openLink(htmlUrl);
       } else {
-        setUpdateResult({
-          hasUpdate: false,
-          latestVersion,
-          message: `You're up to date (v${CURRENT_VERSION})`,
-        });
+        setUpdateResult({ hasUpdate: false, latestVersion, message: `You're up to date (v${CURRENT_VERSION})` });
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
