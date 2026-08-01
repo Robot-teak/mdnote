@@ -4,9 +4,10 @@ import { openUrl } from '../lib/platform';
 
 // 插件版独立版本线（v0.1.8 起，不沿用桌面版版本号）；桌面版沿用各自版本
 const CURRENT_VERSION = isExtension ? '0.1.8' : '0.4.1';
+const TAG_PREFIX = isExtension ? 'extension-v' : 'desktop-v';
 const GITHUB_REPO = 'https://github.com/Robot-teak/mdnote';
 const GITHUB_AUTHOR = 'https://github.com/Robot-teak';
-const GITHUB_RELEASES_API = 'https://api.github.com/repos/Robot-teak/mdnote/releases/latest';
+const GITHUB_RELEASES_API = 'https://api.github.com/repos/Robot-teak/mdnote/releases?per_page=30';
 
 interface AboutDialogProps {
   onClose: () => void;
@@ -43,10 +44,27 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
     try {
       const resp = await fetch(GITHUB_RELEASES_API);
       if (!resp.ok) throw new Error('Network error');
-      const data = await resp.json();
-      const latestTag = data.tag_name as string; // e.g. "v0.1.8"
-      const latestVersion = latestTag.replace(/^v/, ''); // "0.1.8"
-      const htmlUrl = data.html_url as string;
+      const releases = await resp.json();
+      
+      // Filter releases by product tag prefix (desktop-v / extension-v)
+      const myReleases = releases.filter(
+        (r: { tag_name: string }) => r.tag_name && r.tag_name.startsWith(TAG_PREFIX)
+      );
+      
+      if (myReleases.length === 0) {
+        setUpdateResult({
+          hasUpdate: false,
+          message: `No releases found for ${TAG_PREFIX}*`,
+        });
+        setChecking(false);
+        return;
+      }
+
+      // First release in the filtered list is the latest (GitHub returns newest first)
+      const latest = myReleases[0];
+      const latestTag = latest.tag_name as string; // e.g. "desktop-v0.4.2"
+      const latestVersion = latestTag.replace(/^[a-z]+-v/, ''); // "0.4.2"
+      const htmlUrl = latest.html_url as string;
 
       if (compareVersions(latestVersion, CURRENT_VERSION) > 0) {
         setUpdateResult({
@@ -54,7 +72,7 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
           latestVersion,
           message: `New version v${latestVersion} available!`,
         });
-        await openLink(htmlUrl || `${GITHUB_REPO}/releases/latest`);
+        await openLink(htmlUrl);
       } else {
         setUpdateResult({
           hasUpdate: false,
@@ -140,7 +158,7 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
             <p className={`about-update-msg ${updateResult.hasUpdate ? 'has-update' : ''}`}>
               {updateResult.message}
               {updateResult.hasUpdate && (
-                <button className="about-goto-update" onClick={() => openLink(`${GITHUB_REPO}/releases/latest`)}>
+                <button className="about-goto-update" onClick={() => openLink(`${GITHUB_REPO}/releases?q=${TAG_PREFIX}`)}>
                   Go to download →
                 </button>
               )}
