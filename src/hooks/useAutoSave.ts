@@ -18,12 +18,12 @@ export function useAutoSave() {
   const lastSavedHash = useRef<string>('');
 
   /**
-   * 插件版自动保存（按用户规则）：
+   * 插件版自动保存（按用户规则 v0.1.8）：
    * - 没有修改（isDirty=false）→ 不保存，状态不动（打开文件未编辑不触发保存）
    * - 有句柄（应用内打开的文件）→ 写回磁盘原文件，不存草稿
-   * - 写盘失败 → 降级存草稿兜底 + 标记磁盘写入失败（防内容丢失）
-   * - 无句柄且无本地路径（新建文档）→ 存临时草稿
-   * - 无句柄但有路径（浏览器打开的 file://）→ 不存草稿，保持待保存状态
+   * - 有路径无句柄（浏览器打开的文件）→ 不存草稿；修改后自动保存时
+   *   查缓存句柄直写，无缓存则弹一次"定位原文件"拿句柄写回原路径，之后直写
+   * - 无路径（新建文档）→ 存临时草稿
    */
   const saveDraftToIndexedDB = useCallback(async () => {
     const state = useAppStore.getState();
@@ -36,51 +36,62 @@ export function useAutoSave() {
     if (contentHash === lastSavedHash.current) return;
 
     try {
-      // 有句柄 → 写回磁盘原文件（有路径的文件不乱存草稿）
-      if (state.fileHandle) {
-        try {
-          await writeFile(state.fileHandle, state.content);
-          lastSavedHash.current = contentHash;
-          state.setDirty(false);
-          state.setSaveState('disk-saved');
-          state.setDiskWriteFailed(false);
-          return;
-        } catch (err) {
-          // 写盘失败（权限过期等）→ 草稿兜底防丢 + 提示重新授权
-          console.warn('[AutoSave] Disk write failed, saving draft fallback:', err);
-          state.setDiskWriteFailed(true);
-        }
-      }
+      const { generateFileId, writeFile: writeFileSafe, pickOriginalFileHandle } = await import('../lib/platform');
 
-      // 无句柄：
-      // 1) 已授权目录且文件有路径 → 免弹窗直写原文件（浏览器打开的文件自动保存）
-      // 2) 否则存临时草稿（新建文档/未授权，修改后不丢，刷新可从恢复条找回）
-      if (state.filePath) {
-        try {
-          const { tryWriteFileViaDir } = await import('../lib/platform');
-          const fileName = state.filePath.split('/').pop() || state.fileName;
-          const wrote = await tryWriteFileViaDir(fileName, state.content);
-          if (wrote) {
-            lastSavedHash.current = contentHash;
-            state.setDirty(false);
-            state.setSaveState('disk-saved');
-            state.setDiskWriteFailed(false);
-            return;
-          }
-        } catch {
-          // fall through to draft
-        }
-      }
-
-      const { generateFileId } = await import('../lib/platform');
-      const { saveDraft, addRecent } = await import('../lib/indexeddb');
-
+      // 确保 draftId（句柄缓存键）
       let draftId = state.draftId;
       if (!draftId) {
         draftId = generateFileId(state.filePath || state.fileName);
         state.setDraftId(draftId);
       }
 
+      // 有句柄 → 写回磁盘原文件（不存草稿）
+      if (state.fileHandle) {
+        try {
+          await writeFileSafe(state.fileHandle, state.content);
+          lastSavedHash.current = contentHash;
+          state.setDirty(false);
+          state.setSaveState('disk-saved');
+          state.setDiskWriteFailed(false);
+          return;
+        } catch (err) {
+          // 写盘失败（权限过期等）→ 草稿兜底防丢 + 标记
+          console.warn('[AutoSave] Disk write failed:', err);
+          state.setDiskWriteFailed(true);
+        }
+      }
+
+      // 有路径无句柄（浏览器打开的文件）：修改后保存到原路径（不存草稿）
+      if (state.filePath) {
+        const { getHandle, saveHandle } = await import('../lib/indexeddb');
+        let handle: unknown = null;
+        try {
+          const cached = await getHandle(draftId);
+          handle = cached?.handle ?? null;
+        } catch {
+          // ignore
+        }
+        if (!handle) {
+          // 首次：弹一次选择器让用户定位原文件，拿到写回原路径的句柄
+          handle = await pickOriginalFileHandle();
+          if (!handle) return; // 用户取消 → 本次不保存（保持 dirty，下次再试/手动保存）
+          saveHandle(draftId, handle as FileSystemFileHandle, state.fileName).catch(() => {});
+        }
+        try {
+          await writeFileSafe(handle, state.content);
+          lastSavedHash.current = contentHash;
+          state.setDirty(false);
+          state.setSaveState('disk-saved');
+          state.setDiskWriteFailed(false);
+          return;
+        } catch (err) {
+          console.warn('[AutoSave] write-back to original path failed:', err);
+          state.setDiskWriteFailed(true);
+        }
+      }
+
+      // 无路径（新建文档）→ 存临时草稿
+      const { saveDraft, addRecent } = await import('../lib/indexeddb');
       await saveDraft(draftId, state.content, {
         name: state.fileName,
         hasHandle: !!state.fileHandle,

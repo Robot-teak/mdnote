@@ -1452,7 +1452,7 @@ html, body, #root {
   background: var(--mf-bg-primary);
   border-radius: 14px;
   padding: 36px 40px 28px;
-  width: 360px;
+  width: 468px; /* 360px → 放宽 30% */
   text-align: center;
   box-shadow: var(--mf-shadow-lg);
   border: 1px solid var(--mf-border);

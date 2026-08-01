@@ -169,11 +169,17 @@ export function useFileOps() {
       setIsPreviewLoading(true);
       setFilePath(path ?? name);
       setContent(content);
-      // 无句柄但已授权目录时，尝试按文件名绑定句柄（浏览器打开的文件 → 自动保存直写原文件）
+      // 无句柄但有路径（浏览器打开的文件）：查缓存句柄绑定（此前保存过则直写原路径）
       if (!handle && isExtension && path) {
-        const { getFileHandleViaDir } = await import('../lib/platform');
-        const fileName = path.split('/').pop() || name;
-        handle = await getFileHandleViaDir(fileName).catch(() => null);
+        try {
+          const { generateFileId } = await import('../lib/platform');
+          const { getHandle } = await import('../lib/indexeddb');
+          const draftId = generateFileId(path);
+          const cached = await getHandle(draftId);
+          handle = cached?.handle ?? null;
+        } catch {
+          handle = null;
+        }
       }
       setFileHandle(handle ?? null);
       setDirty(false);
@@ -320,30 +326,37 @@ export function useFileOps() {
           return true;
         }
         // 无句柄（浏览器打开的文件/新建文档）：
-        // 1) 已授权目录 → 按文件名免弹窗直写原文件
-        // 2) 未授权 → 弹一次目录选择（选文件所在目录），此后该目录文件保存免弹窗
-        const { tryWriteFileViaDir, authorizeDirectory } = await import('../lib/platform');
-        const fileName = state.filePath ? state.filePath.split('/').pop() || state.fileName : state.fileName;
-
-        let wrote = false;
-        if (fileName && state.filePath) {
-          wrote = await tryWriteFileViaDir(fileName, state.content);
-        }
-        if (!wrote) {
-          // 首次保存：授权文件所在目录（此后免弹窗直写原文件）
-          const dir = await authorizeDirectory();
-          if (!dir) return false; // 用户取消 → 不显示"Saved!"
-          wrote = await tryWriteFileViaDir(fileName, state.content);
-        }
-
-        if (wrote) {
+        // - 有路径：查缓存句柄直写；无缓存则弹一次"定位原文件"拿句柄写回原路径
+        // - 无路径：另存为（新建文档保存）
+        if (state.filePath) {
+          const { generateFileId, pickOriginalFileHandle } = await import('../lib/platform');
+          const { getHandle, saveHandle } = await import('../lib/indexeddb');
+          let draftId = state.draftId;
+          if (!draftId) {
+            draftId = generateFileId(state.filePath);
+            state.setDraftId(draftId);
+          }
+          let handle: unknown = null;
+          try {
+            const cached = await getHandle(draftId);
+            handle = cached?.handle ?? null;
+          } catch {
+            // ignore
+          }
+          if (!handle) {
+            handle = await pickOriginalFileHandle();
+            if (!handle) return false; // 用户取消 → 不显示"Saved!"
+            saveHandle(draftId, handle as FileSystemFileHandle, state.fileName).catch(() => {});
+          }
+          await writeFile(handle, state.content);
           setDirty(false);
           setSaveState('disk-saved');
           useAppStore.getState().setDiskWriteFailed(false);
           return true;
         }
-        showToast('Failed to save file', 'error');
-        return false;
+        // 新建文档（无路径）→ 另存为
+        const ok = await saveAs();
+        return ok;
       }
 
       // 桌面版

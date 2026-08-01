@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { isExtension } from '../lib/platform';
 import { openUrl } from '../lib/platform';
 
@@ -5,6 +6,7 @@ import { openUrl } from '../lib/platform';
 const CURRENT_VERSION = isExtension ? '0.1.8' : '0.4.1';
 const GITHUB_REPO = 'https://github.com/Robot-teak/mdnote';
 const GITHUB_AUTHOR = 'https://github.com/Robot-teak';
+const GITHUB_RELEASES_API = 'https://api.github.com/repos/Robot-teak/mdnote/releases/latest';
 
 interface AboutDialogProps {
   onClose: () => void;
@@ -14,7 +16,62 @@ async function openLink(url: string) {
   await openUrl(url);
 }
 
+/** Compare semver versions. Returns 1 if a > b, -1 if a < b, 0 if equal */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
+
 export default function AboutDialog({ onClose }: AboutDialogProps) {
+  const [checking, setChecking] = useState(false);
+  const [updateResult, setUpdateResult] = useState<{
+    hasUpdate: boolean;
+    latestVersion?: string;
+    message: string;
+  } | null>(null);
+
+  async function checkForUpdates() {
+    setChecking(true);
+    setUpdateResult(null);
+    try {
+      const resp = await fetch(GITHUB_RELEASES_API);
+      if (!resp.ok) throw new Error('Network error');
+      const data = await resp.json();
+      const latestTag = data.tag_name as string; // e.g. "v0.1.8"
+      const latestVersion = latestTag.replace(/^v/, ''); // "0.1.8"
+      const htmlUrl = data.html_url as string;
+
+      if (compareVersions(latestVersion, CURRENT_VERSION) > 0) {
+        setUpdateResult({
+          hasUpdate: true,
+          latestVersion,
+          message: `New version v${latestVersion} available!`,
+        });
+        await openLink(htmlUrl || `${GITHUB_REPO}/releases/latest`);
+      } else {
+        setUpdateResult({
+          hasUpdate: false,
+          latestVersion,
+          message: `You're up to date (v${CURRENT_VERSION})`,
+        });
+      }
+    } catch {
+      setUpdateResult({
+        hasUpdate: false,
+        message: 'Failed to check for updates',
+      });
+    } finally {
+      setChecking(false);
+    }
+  }
+
   return (
     <div className="about-overlay" onClick={onClose}>
       <div className="about-dialog" onClick={(e) => e.stopPropagation()}>
@@ -68,6 +125,27 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
           <button className="about-link-btn" onClick={() => openLink(GITHUB_AUTHOR)}>
             👤 Robot-teak
           </button>
+        </div>
+
+        {/* Check Update（插件版后续发布到 GitHub 后启用） */}
+        <div className="about-update">
+          <button
+            className="about-update-btn"
+            onClick={checkForUpdates}
+            disabled={checking}
+          >
+            {checking ? 'Checking...' : 'Check for Updates'}
+          </button>
+          {updateResult && (
+            <p className={`about-update-msg ${updateResult.hasUpdate ? 'has-update' : ''}`}>
+              {updateResult.message}
+              {updateResult.hasUpdate && (
+                <button className="about-goto-update" onClick={() => openLink(`${GITHUB_REPO}/releases/latest`)}>
+                  Go to download →
+                </button>
+              )}
+            </p>
+          )}
         </div>
 
         {/* Footer */}

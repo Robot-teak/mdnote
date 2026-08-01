@@ -658,3 +658,26 @@ export async function getFileHandleViaDir(fileName: string): Promise<FileSystemF
     return null;
   }
 }
+
+/**
+ * 弹文件选择器让用户定位原文件（浏览器打开的 file:// 文件保存时获取写回原路径的句柄）。
+ * 用户选中原文件后返回其句柄（保存到原路径），取消返回 null。
+ * 插件版专用；桌面版无此 API，返回 null。
+ */
+export async function pickOriginalFileHandle(): Promise<FileSystemFileHandle | null> {
+  if (!isFileSystemAccessSupported()) return null;
+  try {
+    const [handle] = await window.showOpenFilePicker!({
+      multiple: false,
+      types: [
+        {
+          description: 'Markdown files',
+          accept: MARKDOWN_ACCEPT_TYPES,
+        },
+      ],
+    });
+    return handle;
+  } catch {
+    return null; // 用户取消
+  }
+}
