@@ -42,7 +42,11 @@ const MessageType = {
   OPEN_EDITOR_TAB: 'open-editor-tab',
   TAB_ALIVE: 'tab-alive',
   MD_FILE_OPEN: 'md-file-open',
-  OPEN_FILE_URL: 'open-file-url',
+  /**
+   * #1 Open 分流：content script 选中文件后请求「在新标签页打开该文件本身」。
+   * 负载 {name, size, headHash, currentDir} → 回执 {ok:true, absPath} | {ok:false, reason}。
+   */
+  OPEN_PICKED_FILE: 'open-picked-file',
 } as const;
 
 /** 右键菜单 ID */
@@ -55,10 +59,22 @@ const FILE_LOCK_PREFIX = 'file-lock:';
 const PENDING_OPEN_KEY = 'mdnote-pending-open';
 
 /**
- * 最近一次内联打开的 file:// 文档所在目录（#1 Open 的浏览起点）。
- * 由 content-md.ts 在渲染 file:// 文档时写入。
+ * 历史命中过的目录（最近优先），Open 探测时排在候选表前列。
+ * 命中一次就记一次，下次跨目录 Open 基本一发命中。
  */
-const LAST_DIR_URL_KEY = 'mdnote-last-dir-url';
+const OPEN_DIRS_KEY = 'mdnote-open-dirs';
+
+/** 历史命中目录保留上限 */
+const OPEN_DIRS_LIMIT = 8;
+
+/** 单次 Open 最多探测的候选目录数（防止无谓 fetch 风暴） */
+const CANDIDATE_DIR_LIMIT = 16;
+
+/** 指纹取样的字符数（content-md.ts 侧同名常量必须相同） */
+const HEAD_HASH_CHARS = 4096;
+
+/** 整个候选目录探测流程的总超时（超时按 not-found 处理） */
+const PROBE_TIMEOUT_MS = 3000;
 
 /**
  * 「允许访问文件网址」未勾选时回给调用方的统一提示（R10）。
@@ -89,6 +105,208 @@ async function isFileSchemeAllowed(): Promise<boolean | null> {
   } catch {
     return null;
   }
+}
+
+// ──────────────────────────────────────────────
+// Open 绝对路径探测（配合 content-md.ts 的 open-picked-file）
+// ──────────────────────────────────────────────
+//
+// 为什么要探测：MV3 里 chrome.fileSystem 不存在（manifest 声明会被静默丢弃），
+// FileSystemFileHandle 与 File 都不带路径，所以 showOpenFilePicker 选完之后
+// **拿不到绝对路径**。而新标签页必须用所选文件的真实绝对路径打开（拿「当前目录 +
+// 文件名」硬拼是历史 bug，跨目录必 404）。
+//
+// 做法：content script 给出 name + size + 内容指纹，这里拿一小组**有序候选目录**
+// 逐个 fetch('file://<dir>/<name>')，指纹相等即命中。
+// 明确不做：不递归扫目录树、不解析 Chrome 目录列表 HTML、不新增 host_permissions
+// （扩展能否读 file:// 只取决于用户的「允许访问文件网址」开关）。
+
+/**
+ * FNV-1a 32 位哈希（纯函数，无依赖）。
+ *
+ * 必须与 content-md.ts 的同名实现逐字一致 —— 两侧算出的指纹不同就永远 miss。
+ *
+ * @param input 待哈希字符串
+ * @returns 无符号 32 位哈希值
+ */
+function fnv1a32(input: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash >>> 0;
+}
+
+/**
+ * 拼接目录与文件名，避免根目录 '/' 拼出 '//name'。
+ *
+ * @param dir 目录绝对路径
+ * @param name 文件名
+ * @returns 文件绝对路径
+ */
+function joinPath(dir: string, name: string): string {
+  return dir.endsWith('/') ? dir + name : dir + '/' + name;
+}
+
+/**
+ * 读取历史命中目录列表（最近优先）。
+ *
+ * @returns 绝对路径数组；读不到或格式异常回空数组
+ */
+async function readOpenDirs(): Promise<string[]> {
+  try {
+    const stored = await chrome.storage.local.get(OPEN_DIRS_KEY);
+    const list = stored?.[OPEN_DIRS_KEY];
+    if (!Array.isArray(list)) return [];
+    return list.filter((d): d is string => typeof d === 'string' && d.startsWith('/'));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 把命中目录写回历史（去重、最近优先、上限 OPEN_DIRS_LIMIT）。
+ *
+ * @param dir 本次命中的目录绝对路径
+ */
+async function rememberOpenDir(dir: string): Promise<void> {
+  try {
+    const prev = await readOpenDirs();
+    const next = [dir, ...prev.filter((d) => d !== dir)].slice(0, OPEN_DIRS_LIMIT);
+    await chrome.storage.local.set({ [OPEN_DIRS_KEY]: next });
+  } catch {
+    // 历史记录只是加速手段，写失败不影响本次结果
+  }
+}
+
+/**
+ * 构造有序去重的候选目录表。
+ *
+ * 顺序即优先级：当前文档目录 → 历史命中目录 → 家目录下 Desktop/Documents/Downloads
+ * → 家目录本身。截断到 CANDIDATE_DIR_LIMIT 个。
+ *
+ * @param currentDir 当前 file:// 文档所在目录
+ * @param historyDirs 历史命中目录（最近优先）
+ * @returns 候选目录绝对路径数组
+ */
+function buildCandidateDirs(currentDir: string, historyDirs: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  /**
+   * 归一化后入表（非绝对路径、重复项直接丢弃）。
+   * @param dir 候选目录
+   */
+  const push = (dir: string): void => {
+    if (!dir) return;
+    // 去掉末尾多余的 '/'（根目录 '/' 保留）
+    const norm = dir.length > 1 && dir.endsWith('/') ? dir.replace(/\/+$/, '') || '/' : dir;
+    if (!norm.startsWith('/') || seen.has(norm)) return;
+    seen.add(norm);
+    out.push(norm);
+  };
+
+  push(currentDir);
+  for (const dir of historyDirs) push(dir);
+
+  // 家目录常用位置（匹配不到家目录就整组跳过）
+  const home = /^(\/Users\/[^/]+)/.exec(currentDir)?.[1];
+  if (home) {
+    push(home + '/Desktop');
+    push(home + '/Documents');
+    push(home + '/Downloads');
+    push(home);
+  }
+
+  return out.slice(0, CANDIDATE_DIR_LIMIT);
+}
+
+/**
+ * 探测单个候选目录下是否存在指纹匹配的目标文件。
+ *
+ * 注意：file:// 的 Response.status 可能是 200 也可能是 0（opaque-ish），
+ * 因此**不能只判 res.ok**，一律以能否读到 body 且指纹是否相等为准。
+ * 目录 URL 也会返回 HTML body，但指纹对不上，天然被排除。
+ *
+ * @param dir 候选目录
+ * @param name 文件名
+ * @param size 选中文件字节数（0 表示不参与粗筛）
+ * @param headHash content script 侧算出的头部指纹
+ * @returns 命中返回 true
+ */
+async function probeCandidateDir(
+  dir: string,
+  name: string,
+  size: number,
+  headHash: number,
+): Promise<boolean> {
+  const url = 'file://' + encodeURI(joinPath(dir, name));
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    const body = await res.text();
+    if (!body) return false;
+    // 粗筛：UTF-8 字节数恒 >= UTF-16 code unit 数，所以 body.length > size 必不是同一文件。
+    // （size 是字节、body.length 是字符，中文文件两者不等，故只能做单向粗筛，不能做等值判据。）
+    if (size > 0 && body.length > size) return false;
+    return fnv1a32(body.slice(0, HEAD_HASH_CHARS)) === headHash;
+  } catch {
+    // 文件不存在 / 无权限 → fetch reject，视为未命中
+    return false;
+  }
+}
+
+/**
+ * 顺序遍历候选目录，返回第一个命中的目录。
+ *
+ * @param candidates 候选目录（已按优先级排序）
+ * @param name 文件名
+ * @param size 选中文件字节数
+ * @param headHash 头部指纹
+ * @returns 命中目录；全 miss 返回 null
+ */
+async function locateFileDir(
+  candidates: string[],
+  name: string,
+  size: number,
+  headHash: number,
+): Promise<string | null> {
+  for (const dir of candidates) {
+    if (await probeCandidateDir(dir, name, size, headHash)) return dir;
+  }
+  return null;
+}
+
+/**
+ * 给 Promise 套总超时（超时回 fallback，不 reject）。
+ *
+ * @param task 待执行的 Promise
+ * @param timeoutMs 超时毫秒数
+ * @param fallback 超时返回值
+ * @returns task 结果或 fallback
+ */
+function withTimeout<T>(task: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(fallback);
+    }, timeoutMs);
+    task
+      .then((value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(() => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(fallback);
+      });
+  });
 }
 
 // ──────────────────────────────────────────────
@@ -195,65 +413,78 @@ chrome.runtime.onMessage.addListener(
         return true; // 异步响应
       }
 
-      case MessageType.OPEN_FILE_URL: {
-        // #1 Open（inline 模式）：在新标签页打开 file:// URL。
+      case MessageType.OPEN_PICKED_FILE: {
+        // #1 Open（inline 模式，当前页非空）：在新标签页打开**用户刚选中的那个文件**。
         //
-        // content script 不能直接调用 chrome.tabs，由此处代劳。
-        // 用途：打开当前文档所在目录的 file:// 目录列表，用户点中的 .md
-        // 会导航成 file:// 文档页并由 content-md.js 内联渲染 ——
-        // 这样「打开的内容渲染在 file:// 文档页」，且新标签页不会替换
-        // 当前标签页已有内容。
+        // content script 不能直接调 chrome.tabs，也拿不到选中文件的绝对路径
+        // （MV3 无 chrome.fileSystem；FileSystemFileHandle / File 均不带路径），
+        // 因此它只能给出 name + size + 内容指纹，由这里探测出真实绝对路径再开页签。
         //
-        // 独立 editor.html 标签页也会直接发这条消息（它没有 file:// 父页面，
-        // postMessage 无人接收）。它可能不知道该从哪个目录开始浏览，
-        // 因此 url 缺失时回落到最近一次内联打开的目录，再不行就用根目录。
-        //
-        // 安全：只允许 file:// 前缀（不做任意 URL 跳转）。
-        // 前置条件：chrome://extensions → MDnote → 勾选「允许访问文件网址」，
-        // 否则 tabs.create 会失败，调用方侧会降级到文件选择器。
-        const requestedUrl = (msg.payload as { url?: string } | undefined)?.url;
-        const hasValidUrl = typeof requestedUrl === 'string' && requestedUrl.startsWith('file://');
+        // 回执契约：
+        //   命中 → { ok: true, absPath }
+        //   失败 → { ok: false, reason: 'file-access-disabled' | 'not-found'
+        //                              | 'bad-request' | 'tab-create-failed' }
+        // content script 收到 ok:false 会降级为「就地加载 + warn 提示」，绝不静默。
+        const openPayload = msg.payload as
+          | { name?: string; size?: number; headHash?: number; currentDir?: string }
+          | undefined;
+        const pickedName = typeof openPayload?.name === 'string' ? openPayload.name : '';
+        const pickedHash = typeof openPayload?.headHash === 'number' ? openPayload.headHash : NaN;
+        const pickedSize =
+          typeof openPayload?.size === 'number' && openPayload.size > 0 ? openPayload.size : 0;
+        const currentDir = typeof openPayload?.currentDir === 'string' ? openPayload.currentDir : '';
 
         (async () => {
-          let targetUrl = hasValidUrl ? (requestedUrl as string) : '';
-          if (!targetUrl) {
-            try {
-              const stored = await chrome.storage.local.get(LAST_DIR_URL_KEY);
-              const lastDir = stored?.[LAST_DIR_URL_KEY];
-              targetUrl =
-                typeof lastDir === 'string' && lastDir.startsWith('file://') ? lastDir : 'file:///';
-            } catch {
-              targetUrl = 'file:///';
-            }
-          }
-          // ── R10 ①：先查「允许访问文件网址」开关（权威判据）──────────────
-          // 未勾选时 tabs.create(file://) 会被**静默拦截**（不 reject、不抛错），
-          // 旧实现的 try/catch 因此永远走 ok:true，调用方误判成功 → 用户点
-          // Open 什么都没发生。这里提前如实回失败，调用方好走降级。
-          const allowed = await isFileSchemeAllowed();
-          if (allowed === false) {
-            sendResponse({ ok: false, error: FILE_ACCESS_HINT });
+          if (!pickedName || Number.isNaN(pickedHash)) {
+            sendResponse({ ok: false, reason: 'bad-request' });
             return;
           }
 
-          try {
-            const tab = await chrome.tabs.create({ url: targetUrl });
+          // ── ①：先查「允许访问文件网址」开关（权威判据）──────────────────
+          // 未勾选时 fetch('file://…') 读不到内容、tabs.create(file://) 还会被
+          // **静默拦截**（不 reject、不抛错）。提前如实回失败，调用方好给出
+          // 「去 chrome://extensions 打开开关」的准确提示，而不是含糊的失败。
+          const allowed = await isFileSchemeAllowed();
+          if (allowed === false) {
+            sendResponse({ ok: false, reason: 'file-access-disabled', error: FILE_ACCESS_HINT });
+            return;
+          }
 
-            // ── R10 ②：校验**真实落地的 URL**（二道防线）────────────────
-            // 注意 manifest 未申请 "tabs" 权限，Chrome 会把 url/pendingUrl
-            // 抹成 undefined。那是"看不到"而不是"落错了"—— 若把空值判成失败，
-            // 已勾选开关的用户也会被误伤。因此只有在**看得见** landed URL
+          // ── ②：有序候选目录探测（总超时 3s，超时按 not-found 处理）────────
+          const history = await readOpenDirs();
+          const candidates = buildCandidateDirs(currentDir, history);
+          const hitDir = await withTimeout(
+            locateFileDir(candidates, pickedName, pickedSize, pickedHash),
+            PROBE_TIMEOUT_MS,
+            null,
+          );
+          if (!hitDir) {
+            sendResponse({ ok: false, reason: 'not-found' });
+            return;
+          }
+
+          // ── ③：用**真实绝对路径**开新标签页 ─────────────────────────────
+          const absPath = joinPath(hitDir, pickedName);
+          try {
+            const tab = await chrome.tabs.create({ url: 'file://' + encodeURI(absPath) });
+
+            // 校验**真实落地的 URL**（二道防线）。
+            // tabs 权限已申请，实测 tabs.create 立即返回 {url:"", pendingUrl:"file://…"}，
+            // 稍后 url 会补齐为 file:// —— 也就是说 landed URL 通常**看得见**。
+            // 但仍保留空值放行：拿不到值只说明"看不见"，不代表"落错了"，
+            // 若把空值判成失败会误伤已勾选开关的用户。只有在看得见 landed URL
             // 且它确实不是 file:// 时（about:blank / chrome-error://）才判失败。
             const landed = tab?.url || tab?.pendingUrl || '';
-            const isFileTab = landed.startsWith('file://');
-            if (landed && !isFileTab) {
-              sendResponse({ ok: false, error: FILE_ACCESS_HINT });
+            if (landed && !landed.startsWith('file://')) {
+              sendResponse({ ok: false, reason: 'file-access-disabled', error: FILE_ACCESS_HINT });
               return;
             }
 
-            sendResponse({ ok: true, tabId: tab.id, url: targetUrl });
+            // 命中目录写回历史，下次同目录 Open 一发命中
+            void rememberOpenDir(hitDir);
+            sendResponse({ ok: true, absPath, tabId: tab.id });
           } catch (err) {
-            sendResponse({ ok: false, error: String(err) });
+            sendResponse({ ok: false, reason: 'tab-create-failed', error: String(err) });
           }
         })();
         return true; // 异步响应

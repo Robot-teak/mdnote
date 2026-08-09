@@ -5,6 +5,12 @@ import { useToast } from './Toast';
 import { useFileOps } from '../hooks/useFileOps';
 import { isExtension } from '../lib/platform';
 
+/**
+ * 工具栏 Open 按钮显隐开关。
+ * 默认隐藏（2026-08-09 用户要求），但代码保留，便于日后一行改回 `true` 恢复。
+ */
+const SHOW_OPEN_BUTTON = false;
+
 interface ToolbarProps {
   onSave?: () => void | Promise<void>;
   onSaveAs?: () => void | Promise<void>;
@@ -161,9 +167,11 @@ export default function Toolbar({ onSave, hasFile = false, isDirty = false, onAb
           <button className="toolbar-btn" onClick={newDocument} title="New Document (⌘N)">
             📄 New
           </button>
-          <button className="toolbar-btn" onClick={openFile} title="Open File (⌘O)">
-            📂 Open
-          </button>
+          {SHOW_OPEN_BUTTON && (
+            <button className="toolbar-btn" onClick={openFile} title="Open File (⌘O)">
+              📂 Open
+            </button>
+          )}
           {onSave && (
             <button
               className={`toolbar-btn ${isDirty ? 'dirty' : ''}`}

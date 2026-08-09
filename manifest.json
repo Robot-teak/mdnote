@@ -58,9 +58,6 @@
   "host_permissions": [
     "https://api.github.com/*"
   ],
-  "host_permissions": [
-    "https://api.github.com/*"
-  ],
   "commands": {
     "open-editor": {
       "suggested_key": {

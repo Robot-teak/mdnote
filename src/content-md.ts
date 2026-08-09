@@ -123,11 +123,6 @@
     }
   }
 
-  /** 当前 file:// 文档所在**目录**的 file:// URL（`file:///a/b.md` → `file:///a/`） */
-  function currentDirUrl(): string {
-    return location.href.slice(0, location.href.lastIndexOf('/') + 1);
-  }
-
   /** 取绝对路径的目录部分（顶层文件回根 '/'） */
   function dirnameOf(p: string): string {
     const i = p.lastIndexOf('/');
@@ -142,6 +137,100 @@
 
   /** content script 覆盖的 Markdown 扩展名（与顶部守卫正则保持一致，另收 .txt） */
   const MD_EXTENSIONS = ['.md', '.markdown', '.mdown', '.mkd', '.txt'];
+
+  // ── Open 路径探测（与 background.ts 的同名实现必须逐字一致）──
+  //
+  // 背景（已由真机实测确认，勿再推翻）：
+  //   - chrome.fileSystem 在 MV3 扩展的**所有**上下文都是 undefined，manifest 里
+  //     声明 "fileSystem" 会被 Chrome 静默丢弃 —— 拿不到 Entry.fullPath；
+  //   - FileSystemFileHandle 没有任何路径属性，File 也没有 .path；
+  //   - showOpenFilePicker 只能在 file:// 顶级文档调（跨源 iframe 里必抛
+  //     SecurityError），所以选择器只能留在本 content script 里。
+  // 结论：选择器给不出绝对路径，只能**探测** —— 用选中文件的 name + 内容指纹，
+  // 让 background 拿一小组有序候选目录逐个 fetch('file://<dir>/<name>') 比对，
+  // 指纹相等即命中。指纹算法两边必须完全一致，否则永远 miss。
+
+  /** 指纹取样的字符数（background.ts 侧同名常量必须相同） */
+  const HEAD_HASH_CHARS = 4096;
+
+  /**
+   * FNV-1a 32 位哈希（纯函数，无依赖）。
+   *
+   * 逐 UTF-16 code unit 计算，因此只要两侧拿到的是同一个 JS 字符串，
+   * 结果必然相同（content 侧来自 File.text()，background 侧来自 Response.text()，
+   * 同一个 UTF-8 文件解码后是同一字符串）。
+   *
+   * @param input 待哈希字符串
+   * @returns 无符号 32 位哈希值
+   */
+  function fnv1a32(input: string): number {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < input.length; i++) {
+      hash ^= input.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return hash >>> 0;
+  }
+
+  /**
+   * 给 chrome.runtime.sendMessage 套一层超时 + lastError 兜底。
+   *
+   * background service worker 可能正在冷启动、也可能因异常不回执；没有超时
+   * 兜底时调用方会永久挂起（表现为「点了 Open 之后什么都没发生」）。
+   *
+   * @param message 发给 background 的消息
+   * @param timeoutMs 超时毫秒数
+   * @returns 回执对象；超时 / lastError / 抛错一律回 null
+   */
+  function sendMessageWithTimeout<T>(message: unknown, timeoutMs: number): Promise<T | null> {
+    return new Promise<T | null>((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => done(null), timeoutMs);
+      /**
+       * 单次结算（超时与回执竞态，先到先得）。
+       * @param value 结算值
+       */
+      function done(value: T | null): void {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      }
+      try {
+        chrome.runtime.sendMessage(message, (resp: T) => {
+          if (chrome.runtime.lastError) {
+            console.warn('[MDnote][Open] sendMessage lastError:', chrome.runtime.lastError.message);
+            done(null);
+            return;
+          }
+          done(resp ?? null);
+        });
+      } catch (e) {
+        console.warn('[MDnote][Open] sendMessage threw:', e);
+        done(null);
+      }
+    });
+  }
+
+  /** background 回的 reason → 面向用户的中文降级提示 */
+  const OPEN_FALLBACK_WARNINGS: Record<string, string> = {
+    'file-access-disabled':
+      '未能在新标签页打开：请到 chrome://extensions 打开 MDnote 的「允许访问文件网址」开关。已在当前页打开。',
+    'not-found': '未能定位该文件的绝对路径，已在当前页打开。',
+  };
+
+  /**
+   * 把 background 的失败原因翻译成用户可读的降级提示。
+   *
+   * 任何未知 reason / 超时（resp 为 null）都落到通用文案 —— 绝不静默降级。
+   *
+   * @param reason background 回执里的 reason 字段
+   * @returns 中文提示文案
+   */
+  function describeOpenFallback(reason?: string): string {
+    if (reason && OPEN_FALLBACK_WARNINGS[reason]) return OPEN_FALLBACK_WARNINGS[reason];
+    return '新标签页打开失败，已在当前页打开。';
+  }
 
   /** showSaveFilePicker 的 startIn 可接受的 well-known 目录枚举 */
   type WellKnownDir = 'desktop' | 'documents' | 'downloads' | 'music' | 'pictures' | 'videos';
@@ -367,12 +456,12 @@
             // 后按它决定落点：
             //   - 空文档 → 就地加载进当前编辑器（下方既有行为，回内容）；
             //   - 有内容 → **不动当前页**，在**新标签页**打开「选中文件本身」的
-            //     file:// 文档页（URL = 当前目录 + 选中文件名），新页签由本
-            //     content script 内联渲染，当前页未保存内容完整保留。
-            // 为什么只能拼「当前目录+文件名」：showOpenFilePicker 只返回
-            // FileSystemFileHandle，Chrome **不暴露绝对路径**。能落 file:// 的
-            // 唯一办法就是「当前目录 + 文件名」——**选中文件须与当前 .md 同目录**。
-            // 若 window.open 被弹窗拦截，则降级为就地加载（当前页替换）。
+            //     file:// 文档页，新页签由本 content script 内联渲染，当前页未保存
+            //     内容完整保留。
+            // 新标签 URL 必须是**所选文件的真实绝对路径**。MV3 里既没有
+            // chrome.fileSystem（API 不存在），FileSystemFileHandle / File 也都不带
+            // 路径，因此改为把 name + size + 内容指纹交给 background 做**候选目录探测**
+            // （见下方 open-picked-file）。任何失败都降级为就地加载 + warn。
 
             postToIframe('mdnote:open-file-ack', { ok: true });
 
@@ -524,80 +613,6 @@
             };
 
             /**
-             * 在新标签页打开 file:// URL，被弹窗拦截时退回「点一下重开」手势层。
-             *
-             * 仅用于 Open 分流的「非空 → 新标签」路径：showOpenFilePicker 已消耗掉
-             * 一次 user activation，紧跟的 window.open 很可能被拦截（上一个实现
-             * 就是卡在这，表现为「选完文件啥也没发生」）。所以拦截后收一次真实点击
-             * 补回激活再重试；连手势点击也打不开，才让调用方降级就地加载。
-             *
-             * @returns true = 新标签确实打开；false = 连手势点击也打不开（应降级）
-             */
-            const openNewTabWithFallback = (fileUrl: string): Promise<boolean> => {
-              return new Promise<boolean>((resolve) => {
-                const tryOpen = (): boolean => {
-                  try {
-                    return !!window.open(fileUrl, '_blank');
-                  } catch {
-                    return false;
-                  }
-                };
-                if (tryOpen()) {
-                  resolve(true);
-                  return;
-                }
-                console.warn('[MDnote][Open] window.open 被拦截，弹手势层重试');
-                const overlay = document.createElement('div');
-                overlay.id = '__mdnote_open_newtab_gesture';
-                overlay.tabIndex = -1;
-                overlay.style.cssText =
-                  'position:fixed;inset:0;top:0;left:0;right:0;bottom:0;z-index:2147483647;' +
-                  'background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;' +
-                  'cursor:pointer;outline:none;font-family:-apple-system,BlinkMacSystemFont,sans-serif';
-                overlay.title = 'Click to open in new tab';
-                const card = document.createElement('div');
-                card.style.cssText =
-                  'background:#fff;color:#1a1a2e;padding:22px 30px;border-radius:8px;' +
-                  'text-align:center;box-shadow:0 4px 24px rgba(0,0,0,0.2);max-width:min(520px,86vw)';
-                const title = document.createElement('p');
-                title.style.cssText = 'margin:0;font-size:15px;font-weight:600';
-                title.textContent = 'Click to open in new tab';
-                const hint = document.createElement('p');
-                hint.style.cssText = 'margin:10px 0 0;font-size:12px;color:#777;line-height:1.5';
-                hint.textContent =
-                  'Click anywhere to open the selected file in a new tab. Chrome needs one ' +
-                  'click on this page before it can open a new tab.';
-                card.appendChild(title);
-                card.appendChild(hint);
-                overlay.appendChild(card);
-
-                const teardown = (): void => {
-                  window.removeEventListener('keydown', esc, true);
-                  overlay.removeEventListener('click', doOpen);
-                  overlay.remove();
-                };
-                const doOpen = (): void => {
-                  teardown();
-                  resolve(tryOpen());
-                };
-                const esc = (e: KeyboardEvent): void => {
-                  if (e.key === 'Escape') {
-                    teardown();
-                    resolve(false);
-                  }
-                };
-                overlay.addEventListener('click', doOpen);
-                window.addEventListener('keydown', esc, true);
-                document.body?.appendChild(overlay);
-                try {
-                  overlay.focus({ preventScroll: true });
-                } catch {
-                  overlay.focus();
-                }
-              });
-            };
-
-            /**
              * 调起文件选择器 → 读内容 → 缓存可写句柄 → 回传内容。
              *
              * ⚠️ 时序（与 focusEditor 的注释同一条规则）：函数体在第一个 await
@@ -645,37 +660,77 @@
                 }
                 console.warn('[MDnote][Open] showOpenFilePicker 已返回句柄:', fileHandle.name);
 
+                // 读内容（同时验证文件确实可读；不可读会抛进下面的 catch）。
+                // 两条分支都要用到 text：就地加载要回传它，新标签页分支要拿它算指纹。
+                const file = await fileHandle.getFile();
+                const text = await file.text();
+
                 // ── Open 分流：当前页有内容 → 在**新标签页**打开「选中文件本身」(file:// 文档页) ──
-                // 当前页为空 → 落到下方「就地加载」。
+                // 当前页为空 → 落到下方「就地加载」（既有行为，未改动）。
                 //
-                // 相对旧死分支的关键修正：
-                //   1. 目标是**选中文件**的 file:// URL，不是所在目录的列表页；
-                //   2. window.open **紧跟 showOpenFilePicker 的唯一一次 await 同步调用**，
-                //      不再先读内容（旧分支多等 2 个 await 后 user activation 过期被拦截，
-                //      表现为"选完文件啥也没发生"）；
-                //   3. 新页签加载时本 content script 会自己 readPageContent() 读出该文件并
-                //      内联渲染，故这里无需回传内容，当前页未保存内容完整保留；
-                //   4. FSAA 只给 FileSystemFileHandle（无绝对路径），只能拼「当前目录+文件名」，
-                //      故选中文件须与当前 .md **同目录**（MV3 硬约束）；
-                //   5. 被弹窗拦截（window.open 返回 null）→ 降级为就地加载（下方）。
+                // 新标签页 URL 必须是**所选文件的真实绝对路径**。历史 bug 是拿
+                // 「当前目录 + 文件名」硬拼，跨目录必 404；chrome.fileSystem.chooseEntry
+                // 那条路也已证伪（MV3 里该 API 根本不存在）。
+                //
+                // 现方案：选择器给不出路径，就**探测**。把 name/size/内容指纹交给
+                // background，由它拿一小组有序候选目录（当前目录 → 历史命中目录 →
+                // 家目录下 Desktop/Documents/Downloads → 家目录）逐个
+                // fetch('file://<dir>/<name>') 比对指纹，命中即用真实绝对路径开新标签页。
+                //
+                // 任何未命中/失败都降级为就地加载，并**必须带 warn 说明原因**（不许静默）。
                 if (!docEmpty && location.protocol === 'file:') {
-                  const fileUrl = currentDirUrl() + encodeURIComponent(fileHandle.name);
-                  console.warn('[MDnote][Open] 非空文档 → 在新标签打开选中文件:', fileUrl);
-                  const opened = await openNewTabWithFallback(fileUrl);
-                  if (opened) {
-                    console.warn('[MDnote][Open] 已在新标签打开选中文件，当前页保持不变');
+                  const headHash = fnv1a32(text.slice(0, HEAD_HASH_CHARS));
+                  console.warn(
+                    '[MDnote][Open] 非空文档 → 请求 background 探测绝对路径:',
+                    file.name,
+                    'size=',
+                    file.size,
+                    'headHash=',
+                    headHash,
+                  );
+                  const resp = await sendMessageWithTimeout<{
+                    ok?: boolean;
+                    absPath?: string;
+                    reason?: string;
+                    error?: string;
+                  }>(
+                    {
+                      type: 'open-picked-file',
+                      payload: {
+                        name: file.name,
+                        size: file.size,
+                        headHash,
+                        currentDir: dirnameOf(currentFilePath()),
+                      },
+                    },
+                    5000,
+                  );
+
+                  if (resp && resp.ok === true && typeof resp.absPath === 'string' && resp.absPath) {
+                    console.warn('[MDnote][Open] 已在新标签打开选中文件:', resp.absPath);
                     finishOpen({ openedInNewTab: true });
                     return;
                   }
-                  console.warn('[MDnote][Open] 新标签打不开（含手势重试），降级为就地加载选中文件');
-                  // 落到下面的就地加载块
+
+                  // 未命中 → 降级就地加载，但必须带 warn 说明原因
+                  console.warn(
+                    '[MDnote][Open] 探测失败，降级为就地加载. reason =',
+                    resp?.reason,
+                    resp?.error || '',
+                  );
+                  cachedFileHandle = fileHandle;
+                  cachedFileName = fileHandle.name;
+                  saveAuthorized = false;
+                  finishOpen({
+                    name: file.name,
+                    content: text,
+                    warn: describeOpenFallback(resp?.reason),
+                  });
+                  return;
                 }
 
-                // 空文档（或非 file:// 源 / 新标签被拦截）：就地加载进当前编辑器。
+                // 空文档（或非 file:// 源）：就地加载进当前编辑器。
                 // 缓存可写句柄供 Save 复用，避免每次保存再弹选择器。
-                // 读内容（同时验证文件确实可读；不可读会抛进下面的 catch）
-                const file = await fileHandle.getFile();
-                const text = await file.text();
                 cachedFileHandle = fileHandle;
                 cachedFileName = fileHandle.name;
                 // 本会话尚未取得写权限：首次显式 Save 时由 createWritable() 触发

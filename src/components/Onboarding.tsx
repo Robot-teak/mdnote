@@ -81,15 +81,16 @@ export default function Onboarding() {
 
         <div style={{ fontSize: '0.9rem', lineHeight: 1.7, marginBottom: 20 }}>
           <p style={{ marginBottom: 12 }}>
-            <strong>📂 Open a file:</strong> Click the <strong>Open</strong> button in the toolbar,
-            or drag a <code>.md</code> file onto this page.
+            <strong>📂 Open a file:</strong> Click the <strong>Open File</strong> button (shown when no
+            file is loaded), drag a <code>.md</code> file onto this page, or press{' '}
+            <kbd style={kbdStyle}>⌘⇧O</kbd>.
           </p>
           <p style={{ marginBottom: 12 }}>
             <strong>⌨️ Quick start:</strong>
           </p>
           <ul style={{ listStyle: 'none', padding: 0, marginBottom: 12 }}>
             <li style={{ padding: '4px 0' }}>
-              <kbd style={kbdStyle}>⌘O</kbd> Open file &nbsp;·&nbsp;
+              <kbd style={kbdStyle}>⌘⇧O</kbd> Open file &nbsp;·&nbsp;
               <kbd style={kbdStyle}>⌘S</kbd> Save
             </li>
             <li style={{ padding: '4px 0' }}>
