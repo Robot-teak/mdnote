@@ -205,6 +205,95 @@ function AppInner() {
     applySettingsToCSS(settings);
   }, [settings]);
 
+  // ──────────────────────────────────────────────
+  // #4 inline editor: iframe 消息桥接
+  // 接收 content-md.ts 通过 postMessage 转发的 background 广播消息
+  // ──────────────────────────────────────────────
+
+  /** 插件版：iframe 内接收 content script 转发的 background 广播消息 */
+  useEffect(() => {
+    if (!isExtension) return;
+
+    const handler = (event: MessageEvent) => {
+      // 安全检查：只处理 mdnote-bridge 消息
+      if (!event.data || event.data.type !== 'mdnote-bridge') return;
+      const bridged = event.data.payload;
+      if (!bridged || typeof bridged.type !== 'string') return;
+
+      // 路由处理
+      switch (bridged.type) {
+        case 'recent-update':
+          // 触发最近文件列表刷新（TocSidebar / RecentFilesPanel 监听此事件）
+          window.dispatchEvent(
+            new CustomEvent('mdnote:recent-update', { detail: bridged.payload }),
+          );
+          break;
+        case 'dirty-change':
+          // 多编辑器状态同步（可选，未来可扩展）
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  /** 插件版：iframe 加载完成（hydrated）后通知父页面恢复可见性 */
+  useEffect(() => {
+    if (isExtension && hydrated) {
+      window.parent.postMessage({ type: 'mdnote-iframe-ready' }, '*');
+    }
+  }, [hydrated]);
+
+  /**
+   * #2 窗口缩放：强制布局刷新。
+   *
+   * 拖动浏览器窗口边缘 / 浏览器缩放（Cmd +-）时，iframe 内的 position:fixed
+   * 元素偶发不重排，表现为状态栏没贴住底部、右侧工具栏没贴住右边缘。
+   * 这里把 #root 尺寸实时同步到视口大小，强制触发一次重排。
+   *
+   * - 用 documentElement.clientWidth/Height（排除滚动条），innerWidth 会把
+   *   经典滚动条宽度算进去，缩放时导致右边缘差几像素。
+   * - 除 window.resize 外，还监听 visualViewport.resize（浏览器缩放、
+   *   移动端软键盘）和 documentElement 的 ResizeObserver（iframe 被父页面
+   *   改尺寸时不一定触发 window.resize）。
+   */
+  useEffect(() => {
+    if (!isExtension) return;
+    const syncSize = () => {
+      const root = document.getElementById('root');
+      if (!root) return;
+      const de = document.documentElement;
+      const w = de.clientWidth || window.innerWidth;
+      const h = de.clientHeight || window.innerHeight;
+      root.style.width = w + 'px';
+      root.style.height = h + 'px';
+    };
+    syncSize();
+
+    window.addEventListener('resize', syncSize);
+    window.addEventListener('orientationchange', syncSize);
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', syncSize);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(syncSize);
+      observer.observe(document.documentElement);
+    }
+
+    return () => {
+      window.removeEventListener('resize', syncSize);
+      window.removeEventListener('orientationchange', syncSize);
+      vv?.removeEventListener('resize', syncSize);
+      observer?.disconnect();
+    };
+  }, []);
+
+  // ──────────────────────────────────────────────
+
   // 桌面版：注册全局函数供 Rust eval() 调用
   useEffect(() => {
     if (!isDesktop) return;
@@ -338,12 +427,22 @@ function AppInner() {
         if (pending.draftId) {
           // #4：从 IndexedDB 恢复内容 + 句柄
           const { getDraft, getHandle } = await import('./lib/indexeddb');
-          const draft = await getDraft(pending.draftId);
-          const h = await getHandle(pending.draftId);
-          if (!draft || cancelled) return;
+          let draft: Awaited<ReturnType<typeof getDraft>> = null;
+          let h: Awaited<ReturnType<typeof getHandle>> = null;
+          try {
+            draft = await getDraft(pending.draftId);
+            h = await getHandle(pending.draftId);
+          } catch (dbErr) {
+            console.warn('[MDnote] Pending open: IndexedDB read failed, using inline content:', dbErr);
+          }
+          if (cancelled) return;
+          // IndexedDB 不可用/草稿丢失时，退回 storage.local 里冗余的内容兜底，
+          // 保证新标签页一定能把文档渲染出来（#4 Open 必须真的显示文档）
+          const content = draft?.content ?? pending.content;
+          if (typeof content !== 'string') return;
           const state = useAppStore.getState();
-          state.setContent(draft.content);
-          state.setFilePath(pending.path ?? draft.meta.filePath ?? draft.meta.name);
+          state.setContent(content);
+          state.setFilePath(pending.path ?? draft?.meta.filePath ?? draft?.meta.name ?? pending.name ?? 'Untitled');
           state.setFileHandle(h?.handle ?? null);
           state.setDraftId(pending.draftId);
           state.setDirty(false);
@@ -351,9 +450,10 @@ function AppInner() {
           state.setViewMode('preview');
           const { renderMarkdown, extractTocFromWorker } = await import('./lib/markdown-parser');
           const [html, toc] = await Promise.all([
-            renderMarkdown(draft.content),
-            extractTocFromWorker(draft.content),
+            renderMarkdown(content),
+            extractTocFromWorker(content),
           ]);
+          if (cancelled) return;
           state.setHtmlPreview(html);
           state.setTocItems(toc);
         } else if (typeof pending.content === 'string') {
@@ -376,6 +476,21 @@ function AppInner() {
       cancelled = true;
     };
   }, [hydrated, openFileByContent]);
+
+  // 插件版：New 打开的新标签页跳过欢迎页直接进入空白文档
+  useEffect(() => {
+    if (!isExtension || !hydrated) return;
+    (async () => {
+      try {
+        if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
+        const res = await chrome.storage.local.get('mdnote-pending-new');
+        if (!res['mdnote-pending-new']) return;
+        await chrome.storage.local.remove('mdnote-pending-new');
+        // 直接进入空白新建文档
+        useAppStore.getState().resetState();
+      } catch {}
+    })();
+  }, [hydrated]);
 
   useUnsavedConfirm();
   // 快捷键保存走 handleSave（与工具栏一致：有句柄写回、无句柄另存为）

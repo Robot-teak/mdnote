@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MDnote",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "A clean Markdown editor for Chrome — edit, preview, and export with live rendering.",
   "minimum_chrome_version": "102",
   "icons": {
@@ -37,11 +37,26 @@
       "run_at": "document_idle"
     }
   ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "editor.html",
+        "assets/*",
+        "hljs-themes/*",
+        "theme-init.js",
+        "error-handler.js"
+      ],
+      "matches": ["file:///*", "http://*/*", "https://*/*"]
+    }
+  ],
   "permissions": [
     "storage",
     "downloads",
     "contextMenus",
     "tabs"
+  ],
+  "host_permissions": [
+    "https://api.github.com/*"
   ],
   "host_permissions": [
     "https://api.github.com/*"

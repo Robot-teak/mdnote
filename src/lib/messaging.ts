@@ -30,6 +30,12 @@ export const MessageType = {
   OPEN_EDITOR_TAB: 'open-editor-tab',
   /** 查询标签页是否存活（#5 文件锁：锁主标签页已关闭时清锁） */
   TAB_ALIVE: 'tab-alive',
+  /**
+   * 请求 background 在新标签页打开 file:// URL（#1 Open）。
+   * 由 content-md.js 发出（content script 不能直接用 chrome.tabs），
+   * 用于把 Open 的落点保持在 file:// 文档页。
+   */
+  OPEN_FILE_URL: 'open-file-url',
 } as const;
 
 /** 标签页间消息 */
@@ -97,16 +103,30 @@ export function onMessage(handler: MessageHandler): () => void {
 
 /**
  * 请求 background 打开新的编辑器标签页（#4）。
+ *
  * 当前窗口已加载文档时，New/Open 不替换当前内容，而是另开标签页。
+ * background 侧 `OPEN_EDITOR_TAB` 会 `chrome.tabs.create` 并回执
+ * `{ ok: true, tabId }`。调用方需要知道标签页到底开成没有：
+ * 开失败时不能静默——否则用户点了 Open/New 之后"什么都没发生"，
+ * 而暂存在 chrome.storage.local 的交接记录还会污染下一个标签页。
+ *
+ * @returns 新标签页是否创建成功
  */
-export async function openEditorInNewTab(): Promise<void> {
+export async function openEditorInNewTab(): Promise<boolean> {
   if (!isExtension || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
-    return;
+    return false;
   }
   try {
-    await chrome.runtime.sendMessage({ type: MessageType.OPEN_EDITOR_TAB });
-  } catch {
-    // 忽略
+    const res = (await chrome.runtime.sendMessage({
+      type: MessageType.OPEN_EDITOR_TAB,
+    })) as { ok?: boolean; tabId?: number } | undefined;
+    // 老版本 background 可能不回执（undefined）；只要 sendMessage 没抛错，
+    // 就认为标签页已创建（保守地判成功，避免误报错误提示）。
+    if (res === undefined || res === null) return true;
+    return res.ok !== false;
+  } catch (err) {
+    console.error('[MDnote] openEditorInNewTab failed:', err);
+    return false;
   }
 }
 

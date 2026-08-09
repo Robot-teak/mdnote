@@ -20,6 +20,10 @@ await build({
   format: 'iife',
   target: 'chrome102',
   minify: true,
+  // esbuild 默认 charset:'ascii' 会把中文字面量转义成 \uXXXX。功能上等价，
+  // 但产物里看不到原文，验收/排查时无法直接 grep 提示语（R10 新增了中文
+  // 降级提示）。Chrome 按 UTF-8 解码扩展内的 JS，输出 utf8 是安全的。
+  charset: 'utf8',
   sourcemap: false,
   logLevel: 'info',
 });

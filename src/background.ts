@@ -16,6 +16,13 @@
  * 注意：MV3 service worker 是非持久的，会在空闲后被挂起。
  * 所有状态必须持久化到 chrome.storage，不能依赖 service worker 内存。
  *
+ * #4 inline editor（iframe 注入）消息桥接说明：
+ * - broadcastToAllTabs 通过 chrome.tabs.sendMessage 广播消息给各标签页的 content script。
+ * - 对于 file:// .md 页面：content-md.ts（#1 iframe 注入）接收消息后通过 postMessage
+ *   转发给 iframe 内的 App.tsx。
+ * - 对于 chrome-extension:// editor.html 页面：无 content script 运行，
+ *   sendMessage 静默失败（Chrome 不报错），消息丢失是可接受的。
+ *
  * @module background
  */
 
@@ -35,6 +42,7 @@ const MessageType = {
   OPEN_EDITOR_TAB: 'open-editor-tab',
   TAB_ALIVE: 'tab-alive',
   MD_FILE_OPEN: 'md-file-open',
+  OPEN_FILE_URL: 'open-file-url',
 } as const;
 
 /** 右键菜单 ID */
@@ -45,6 +53,43 @@ const FILE_LOCK_PREFIX = 'file-lock:';
 
 /** 待打开文件暂存 key（#1 内容脚本 / #4 新标签页打开文件共用） */
 const PENDING_OPEN_KEY = 'mdnote-pending-open';
+
+/**
+ * 最近一次内联打开的 file:// 文档所在目录（#1 Open 的浏览起点）。
+ * 由 content-md.ts 在渲染 file:// 文档时写入。
+ */
+const LAST_DIR_URL_KEY = 'mdnote-last-dir-url';
+
+/**
+ * 「允许访问文件网址」未勾选时回给调用方的统一提示（R10）。
+ * content-md.ts 收到 ok:false 后会降级为「当前页直接打开选中文件」。
+ */
+const FILE_ACCESS_HINT =
+  '请在 chrome://extensions 的 MDnote 项勾选「允许访问文件网址」，才能在新标签页打开目录';
+
+/**
+ * 探测扩展是否已获得「允许访问文件网址」（chrome://extensions 里的开关）。
+ *
+ * R10 根因：开关未勾选时 Chrome **静默拦截** tabs.create(file://) —— 既不
+ * reject 也不抛错，只是把新标签页落在 about:blank / chrome-error://。
+ * 因此只靠 try/catch 会把失败当成功回 ok:true，用户看到的就是
+ * 「点了 Open 什么都没发生」。
+ *
+ * chrome.extension.isAllowedFileSchemeAccess 是这件事的**权威判据**，且不需要
+ * 任何额外权限。它不可用（老版本 Chrome / 非 MV3）时返回 null 表示"无法判定"，
+ * 调用方按"不阻断"处理，改由落地 URL 校验兜底。
+ *
+ * @returns true=已允许；false=未允许；null=无法判定
+ */
+async function isFileSchemeAllowed(): Promise<boolean | null> {
+  try {
+    const probe = chrome.extension?.isAllowedFileSchemeAccess;
+    if (typeof probe !== 'function') return null;
+    return await chrome.extension.isAllowedFileSchemeAccess();
+  } catch {
+    return null;
+  }
+}
 
 // ──────────────────────────────────────────────
 // 1. 工具栏图标点击 → 打开编辑器标签页
@@ -94,6 +139,10 @@ chrome.commands.onCommand.addListener(async (command: string) => {
  *
  * 当前实现为消息转发（广播到所有标签页）。
  * 批次5 N05 messaging.ts 会提供更完善的封装（含文件锁协议 Q19）。
+ *
+ * #4 inline editor 消息桥接：
+ * broadcastToAllTabs 发送的消息由 content-md.ts 接收并通过 postMessage
+ * 转发给 iframe 内的 App.tsx。详见 content-md.ts 中的消息桥接代码。
  */
 chrome.runtime.onMessage.addListener(
   (
@@ -119,7 +168,9 @@ chrome.runtime.onMessage.addListener(
       }
 
       case MessageType.RECENT_UPDATE: {
-        // 广播最近文件列表更新给所有标签页
+        // 广播最近文件列表更新给所有标签页。
+        // #4 inline editor: content-md.ts（iframe 注入的 .md 页面）会接收此广播
+        // 并通过 postMessage 转发给 iframe 内的 App.tsx。
         broadcastToAllTabs(message);
         sendResponse({ ok: true });
         break;
@@ -144,6 +195,70 @@ chrome.runtime.onMessage.addListener(
         return true; // 异步响应
       }
 
+      case MessageType.OPEN_FILE_URL: {
+        // #1 Open（inline 模式）：在新标签页打开 file:// URL。
+        //
+        // content script 不能直接调用 chrome.tabs，由此处代劳。
+        // 用途：打开当前文档所在目录的 file:// 目录列表，用户点中的 .md
+        // 会导航成 file:// 文档页并由 content-md.js 内联渲染 ——
+        // 这样「打开的内容渲染在 file:// 文档页」，且新标签页不会替换
+        // 当前标签页已有内容。
+        //
+        // 独立 editor.html 标签页也会直接发这条消息（它没有 file:// 父页面，
+        // postMessage 无人接收）。它可能不知道该从哪个目录开始浏览，
+        // 因此 url 缺失时回落到最近一次内联打开的目录，再不行就用根目录。
+        //
+        // 安全：只允许 file:// 前缀（不做任意 URL 跳转）。
+        // 前置条件：chrome://extensions → MDnote → 勾选「允许访问文件网址」，
+        // 否则 tabs.create 会失败，调用方侧会降级到文件选择器。
+        const requestedUrl = (msg.payload as { url?: string } | undefined)?.url;
+        const hasValidUrl = typeof requestedUrl === 'string' && requestedUrl.startsWith('file://');
+
+        (async () => {
+          let targetUrl = hasValidUrl ? (requestedUrl as string) : '';
+          if (!targetUrl) {
+            try {
+              const stored = await chrome.storage.local.get(LAST_DIR_URL_KEY);
+              const lastDir = stored?.[LAST_DIR_URL_KEY];
+              targetUrl =
+                typeof lastDir === 'string' && lastDir.startsWith('file://') ? lastDir : 'file:///';
+            } catch {
+              targetUrl = 'file:///';
+            }
+          }
+          // ── R10 ①：先查「允许访问文件网址」开关（权威判据）──────────────
+          // 未勾选时 tabs.create(file://) 会被**静默拦截**（不 reject、不抛错），
+          // 旧实现的 try/catch 因此永远走 ok:true，调用方误判成功 → 用户点
+          // Open 什么都没发生。这里提前如实回失败，调用方好走降级。
+          const allowed = await isFileSchemeAllowed();
+          if (allowed === false) {
+            sendResponse({ ok: false, error: FILE_ACCESS_HINT });
+            return;
+          }
+
+          try {
+            const tab = await chrome.tabs.create({ url: targetUrl });
+
+            // ── R10 ②：校验**真实落地的 URL**（二道防线）────────────────
+            // 注意 manifest 未申请 "tabs" 权限，Chrome 会把 url/pendingUrl
+            // 抹成 undefined。那是"看不到"而不是"落错了"—— 若把空值判成失败，
+            // 已勾选开关的用户也会被误伤。因此只有在**看得见** landed URL
+            // 且它确实不是 file:// 时（about:blank / chrome-error://）才判失败。
+            const landed = tab?.url || tab?.pendingUrl || '';
+            const isFileTab = landed.startsWith('file://');
+            if (landed && !isFileTab) {
+              sendResponse({ ok: false, error: FILE_ACCESS_HINT });
+              return;
+            }
+
+            sendResponse({ ok: true, tabId: tab.id, url: targetUrl });
+          } catch (err) {
+            sendResponse({ ok: false, error: String(err) });
+          }
+        })();
+        return true; // 异步响应
+      }
+
       case MessageType.TAB_ALIVE: {
         // #5 文件锁：查询锁主标签页是否仍存活（tabs.get 不需要 tabs 权限）
         const tabId = (msg.payload as { tabId?: number } | undefined)?.tabId;
@@ -160,6 +275,11 @@ chrome.runtime.onMessage.addListener(
       case MessageType.MD_FILE_OPEN: {
         // #1 内容脚本接管：浏览器打开 .md 文件时，暂存内容、打开编辑器标签页、
         // 然后关闭原来的纯文本标签页（避免残留）。
+        //
+        // 注意：#4 inline editor（iframe 注入）模式下，content-md.ts 不再发送
+        // md-file-open 消息。此 handler 保留作为备用路径：
+        // - 旧版 content script（未更新的用户）仍会发送此消息
+        // - 未来可能作为降级方案（iframe 加载失败时回退到标签页跳转）
         const payload = msg.payload as { name?: string; content?: string; url?: string } | undefined;
         if (payload && typeof payload.content === 'string') {
           chrome.storage.local
@@ -271,6 +391,13 @@ chrome.contextMenus.onClicked.addListener(async (info: chrome.contextMenus.OnCli
 
 /**
  * 向所有标签页广播消息（包括发送者自身）。
+ *
+ * #4 inline editor 消息桥接：
+ * - file:// .md 页面：消息由 content-md.ts 接收，通过 postMessage 转发给
+ *   iframe 内的 App.tsx（详见 content-md.ts 的消息桥接代码）。
+ * - chrome-extension:// editor.html 页面：无 content script，sendMessage
+ *   静默失败（Chrome 不报错）。
+ *
  * @param message 消息对象
  */
 async function broadcastToAllTabs(message: unknown): Promise<void> {

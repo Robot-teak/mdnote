@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { AUTO_SAVE_INTERVAL } from '../lib/constants';
-import { isExtension, writeFile } from '../lib/platform';
+import {
+  isExtension,
+  isIframe,
+  writeFile,
+  saveInlineToOriginal,
+  isInteractiveInlineSaveInFlight,
+} from '../lib/platform';
 
 /**
  * Auto-save hook.
@@ -59,6 +65,30 @@ export function useAutoSave() {
           console.warn('[AutoSave] Disk write failed:', err);
           state.setDiskWriteFailed(true);
         }
+      }
+
+      // inline editor（iframe 模式）：桥接父页面静默直写原文件。
+      // silentOnly=true —— 只有用户此前已授权过（会话内有句柄）才写，
+      // 未授权时什么都不做，绝不在自动保存时弹授权遮罩打断编辑。
+      if (state.filePath && isIframe) {
+        // 并发抑制：用户主动触发的显式 Save 可能正停在系统文件选择框 / Chrome
+        // 授权提示上（冷启动首存尤其久）。此时插一条静默保存毫无意义——冷启动
+        // 此刻必然还没有授权句柄，只会换回一条 needsAuth。让位给正在进行的显式
+        // 保存：保持 dirty，由它写盘并更新状态。
+        if (isInteractiveInlineSaveInFlight()) return;
+        const res = await saveInlineToOriginal(
+          state.content,
+          state.fileName,
+          state.filePath,
+          { silentOnly: true },
+        );
+        if (res.ok) {
+          lastSavedHash.current = contentHash;
+          state.setDirty(false);
+          state.setSaveState('disk-saved');
+          state.setDiskWriteFailed(false);
+        }
+        return;
       }
 
       // 有路径无句柄（浏览器打开的文件）：修改后保存到原路径（不存草稿）

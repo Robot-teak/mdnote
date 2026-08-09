@@ -6,9 +6,11 @@ import { useToast as useToastComp } from '../components/Toast';
 import {
   isExtension,
   isDesktop,
-  openDialog,
+  isIframe,
+  openFileEntry,
   saveDialog,
   writeFile,
+  saveInlineToOriginal,
 } from '../lib/platform';
 import { acquireFileLock, releaseFileLock, isFileLocked, openEditorInNewTab } from '../lib/messaging';
 
@@ -34,6 +36,26 @@ function shouldOpenNewWindow(): boolean {
   return hasDocumentLoaded();
 }
 
+/** chrome.storage.local 中的待打开/待新建键 */
+const PENDING_OPEN_KEY = 'mdnote-pending-open';
+const PENDING_NEW_KEY = 'mdnote-pending-new';
+
+/**
+ * 清理可能残留的交接记录。
+ *
+ * 交接键写入后若目标标签页没能打开（后台 SW 被挂起、用户立刻关标签页等），
+ * 记录会滞留在 chrome.storage.local 里，被下一个新开的编辑器标签页误当成
+ * "要恢复的文档"，表现为 New 打开的却是上次那篇文档 / 欢迎页。
+ */
+async function clearPendingHandoff(): Promise<void> {
+  if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
+  try {
+    await chrome.storage.local.remove([PENDING_OPEN_KEY, PENDING_NEW_KEY]);
+  } catch {
+    // 忽略
+  }
+}
+
 export function useFileOps() {
   const { showToast } = useToastComp();
   const {
@@ -51,13 +73,101 @@ export function useFileOps() {
 
   /**
    * Open a file: show dialog, read content, populate editor + preview.
-   * 插件版：File System Access API + 句柄存储 IndexedDB
+   * 插件版：当前页有内容 → 新标签页打开选中文件本身（file:// 文档页，当前页不动）；
+   *         当前页为空 → 就地加载进当前编辑器。
    * 桌面版：Tauri invoke + 多窗口支持
    */
   const openFile = useCallback(async () => {
     try {
-      const result = await openDialog();
-      if (!result) return; // User cancelled
+      // #1 Open：把当前文档路径带上，目录列表就能直接落在原文件旁边
+      const currentPath = useAppStore.getState().filePath;
+      // Open 分流：当前页是不是「空文档」决定选中文件的落点 ——
+      // 空 → 就地加载进当前编辑器；非空 → 父页面开新标签页（当前页不动）。
+      // 判据只看正文：纯空白（空格/换行）同样算空文档。
+      const docEmpty = useAppStore.getState().content.trim().length === 0;
+      const outcome = await openFileEntry(currentPath, docEmpty);
+
+      if (outcome.kind === 'cancelled') return;
+      if (outcome.kind === 'error') {
+        console.error('[MDnote] Open failed:', outcome.message);
+        showToast(outcome.message, 'error');
+        return;
+      }
+
+      const result = outcome.file;
+
+      // R10 降级提示：文件已经打开成功，只是落点从「新标签页目录列表」退回了
+      // 「当前页」（多半因为没勾选「允许访问文件网址」）。这不是失败，
+      // 用 warning toast 说明原因即可，不能中断后面的加载流程。
+      if (outcome.warn) {
+        showToast(outcome.warn, 'warning');
+      }
+
+      // Open 分流的「已在新标签页打开」回执：file 为 null。
+      // 当前编辑器必须一字不动（未保存内容要保留），这里直接收工——
+      // 既不加载、不改 store，也不能当成 cancelled 去提示用户。
+      if (!result) return;
+
+      /** 把打开的文件渲染进当前编辑器（inline 就地加载 / 独立标签无文档时复用） */
+      const loadOpenedIntoEditor = async (file: {
+        content: string;
+        name: string;
+        path: string;
+        handle: unknown;
+      }): Promise<void> => {
+        setIsPreviewLoading(true);
+
+        // S19 文件锁：释放前一个文件的锁
+        if (isExtension) {
+          const prevDraftId = useAppStore.getState().draftId;
+          if (prevDraftId) {
+            await releaseFileLock(prevDraftId).catch(() => {});
+          }
+        }
+
+        // 更新 store
+        setFilePath(file.path);
+        setContent(file.content);
+        setFileHandle(file.handle);
+        setDirty(false);
+        setSaveState('disk-saved');
+
+        // 插件版：生成 draftId 并保存到 IndexedDB
+        if (isExtension && file.handle) {
+          const { generateFileId } = await import('../lib/platform');
+          const { saveHandle, addRecent } = await import('../lib/indexeddb');
+          const draftId = generateFileId(file.path);
+          setDraftId(draftId);
+          // 存储句柄到 IndexedDB（结构化克隆）
+          saveHandle(draftId, file.handle as FileSystemFileHandle, file.name).catch(() => {});
+          addRecent(draftId, file.name, true, file.content.length).catch(() => {});
+
+          // S19 文件锁：尝试获取写锁
+          const lockAcquired = await acquireFileLock(draftId);
+          if (!lockAcquired) {
+            showToast('File is open in another tab — opening read-only', 'warning');
+          }
+        }
+
+        // 打开文件默认使用预览模式
+        const { setViewMode } = useAppStore.getState();
+        setViewMode('preview');
+
+        // 渲染预览（worker）
+        const html = await renderMarkdown(file.content);
+        setHtmlPreview(html);
+
+        // 提取目录
+        const tocItems: TocItem[] = await extractTocFromWorker(file.content);
+        setTocItems(tocItems);
+      };
+
+      // inline editor（iframe 注入到 file:// 页）：直接加载到当前编辑器面板，
+      // 不替换 file:// 页面、也不新开标签（满足「不能替换当前页面已有内容」）。
+      if (isIframe) {
+        await loadOpenedIntoEditor(result);
+        return;
+      }
 
       // 当前窗口有文档 → 新窗口（桌面版）/ 新标签页（插件版）打开，不替换当前内容（#4）
       if (shouldOpenNewWindow()) {
@@ -71,81 +181,61 @@ export function useFileOps() {
           return;
         }
         // 插件版：暂存文件数据（内容 + 句柄），让新标签页恢复
+        //
+        // Chrome 硬限制：文件选择器（showOpenFilePicker / <input type=file>）
+        // 只返回内容和（FSAA 时）句柄，永远拿不到完整 file:// 路径，
+        // 因此无法构造 `file:///绝对路径` 的新标签页 URL。
+        // 可行方案：新标签页打开 editor.html，通过 chrome.storage.local 的
+        // mdnote-pending-open（draftId + IndexedDB draft，并冗余 content 兜底）
+        // 把文档渲染出来。
         try {
           const { generateFileId } = await import('../lib/platform');
           const { saveDraft, saveHandle } = await import('../lib/indexeddb');
           const draftId = generateFileId(result.path);
-          await saveDraft(draftId, result.content, {
-            name: result.name,
-            hasHandle: !!result.handle,
-            filePath: result.path,
-          });
-          if (result.handle) {
-            await saveHandle(draftId, result.handle as FileSystemFileHandle, result.name);
+
+          // IndexedDB 草稿（可携带句柄）；失败不阻断——storage.local 里有 content 兜底
+          try {
+            await saveDraft(draftId, result.content, {
+              name: result.name,
+              hasHandle: !!result.handle,
+              filePath: result.path,
+            });
+            if (result.handle) {
+              await saveHandle(draftId, result.handle as FileSystemFileHandle, result.name);
+            }
+          } catch (dbErr) {
+            console.warn('[MDnote] Draft handoff via IndexedDB failed, using storage fallback:', dbErr);
           }
+
           if (typeof chrome !== 'undefined' && chrome.storage?.local) {
             await chrome.storage.local.set({
-              'mdnote-pending-open': {
+              [PENDING_OPEN_KEY]: {
                 draftId,
                 name: result.name,
                 path: result.path,
+                // 冗余内容兜底：IndexedDB 不可用/读取失败时新标签页仍能渲染文档
+                content: result.content,
                 createdAt: Date.now(),
               },
             });
           }
-          await openEditorInNewTab();
+
+          const opened = await openEditorInNewTab();
+          if (!opened) {
+            // 绝不静默替换当前文档：交接失败就明确报错，让用户重试
+            await clearPendingHandoff();
+            showToast('Failed to open a new tab — current document kept', 'error');
+          }
         } catch (err) {
           console.error('[MDnote] Failed to hand off file to new tab:', err);
+          await clearPendingHandoff();
           showToast('Failed to open in new tab', 'error');
         }
         return;
       }
 
-      setIsPreviewLoading(true);
-
-      // S19 文件锁：释放前一个文件的锁
-      if (isExtension) {
-        const prevDraftId = useAppStore.getState().draftId;
-        if (prevDraftId) {
-          await releaseFileLock(prevDraftId).catch(() => {});
-        }
-      }
-
-      // 更新 store
-      setFilePath(result.path);
-      setContent(result.content);
-      setFileHandle(result.handle);
-      setDirty(false);
-      setSaveState('disk-saved');
-
-      // 插件版：生成 draftId 并保存到 IndexedDB
-      if (isExtension && result.handle) {
-        const { generateFileId } = await import('../lib/platform');
-        const { saveHandle, addRecent } = await import('../lib/indexeddb');
-        const draftId = generateFileId(result.path);
-        setDraftId(draftId);
-        // 存储句柄到 IndexedDB（结构化克隆）
-        saveHandle(draftId, result.handle as FileSystemFileHandle, result.name).catch(() => {});
-        addRecent(draftId, result.name, true, result.content.length).catch(() => {});
-
-        // S19 文件锁：尝试获取写锁
-        const lockAcquired = await acquireFileLock(draftId);
-        if (!lockAcquired) {
-          showToast('File is open in another tab — opening read-only', 'warning');
-        }
-      }
-
-      // 打开文件默认使用预览模式
-      const { setViewMode } = useAppStore.getState();
-      setViewMode('preview');
-
-      // Render preview in worker
-      const html = await renderMarkdown(result.content);
-      setHtmlPreview(html);
-
-      // Extract TOC
-      const tocItems: TocItem[] = await extractTocFromWorker(result.content);
-      setTocItems(tocItems);
+      // 独立标签且无已加载文档：加载到当前编辑器
+      await loadOpenedIntoEditor(result);
     } catch (err) {
       // Q21 降级闭环：用户拒绝授权 → 自动转草稿模式
       if (isExtension && err instanceof DOMException && err.name === 'AbortError') {
@@ -224,8 +314,25 @@ export function useFileOps() {
           console.error('[MDnote] Failed to create new window:', err);
         }
       } else {
-        // 插件版：开新标签页（空白编辑器），当前窗口内容不受影响
-        await openEditorInNewTab();
+        // 插件版：开新标签页，标记跳过欢迎页直接进入空白文档（#4）
+        //
+        // 关键：先清掉可能残留的 mdnote-pending-open，否则新标签页会优先
+        // 恢复那份旧文档（表现为"New 打开的不是空白文档"）。
+        if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+          try {
+            await chrome.storage.local.remove(PENDING_OPEN_KEY);
+            await chrome.storage.local.set({
+              [PENDING_NEW_KEY]: { createdAt: Date.now() },
+            });
+          } catch (err) {
+            console.warn('[MDnote] Failed to flag pending-new:', err);
+          }
+        }
+        const opened = await openEditorInNewTab();
+        if (!opened) {
+          await clearPendingHandoff();
+          showToast('Failed to open a new tab — current document kept', 'error');
+        }
       }
       return;
     }
@@ -248,7 +355,7 @@ export function useFileOps() {
     setDraftId(null);
     setHtmlPreview('');
     setTocItems([]);
-  }, [resetState, setFileHandle, setDraftId, setHtmlPreview, setTocItems]);
+  }, [resetState, setFileHandle, setDraftId, setHtmlPreview, setTocItems, showToast]);
 
   /**
    * Save As: show dialog, then write to chosen location.
@@ -258,6 +365,8 @@ export function useFileOps() {
    */
   const saveAs = useCallback(async (): Promise<boolean> => {
     try {
+      const prevPath = useAppStore.getState().filePath;
+      // 预填文件名：优先当前文档名（inline 模式下即 file:// 路径的 basename）
       const fileName =
         useAppStore.getState().fileName !== 'Untitled'
           ? useAppStore.getState().fileName
@@ -266,8 +375,14 @@ export function useFileOps() {
       const result = await saveDialog(useAppStore.getState().content, { suggestedName: fileName });
       if (!result) return false; // 用户取消
 
+      // inline 模式桥接保存只能拿到文件名（拿不到绝对路径）。若用户沿用了原文件名，
+      // 保留原来的完整路径，避免状态栏从 /Users/x/doc.md 退化成 doc.md。
+      const keepsOriginalName =
+        !!prevPath && !!result.name && prevPath.endsWith('/' + result.name);
+      const nextPath = keepsOriginalName ? prevPath : result.path;
+
       // 更新 store
-      setFilePath(result.path);
+      setFilePath(nextPath);
       setFileHandle(result.handle);
       setDirty(false);
       setSaveState('disk-saved');
@@ -319,15 +434,52 @@ export function useFileOps() {
               return false;
             }
           }
-          await writeFile(state.fileHandle, state.content);
-          setDirty(false);
-          setSaveState('disk-saved');
-          useAppStore.getState().setDiskWriteFailed(false); // S22: 清除失败标志
-          return true;
+          try {
+            await writeFile(state.fileHandle, state.content);
+            setDirty(false);
+            setSaveState('disk-saved');
+            useAppStore.getState().setDiskWriteFailed(false); // S22: 清除失败标志
+            return true;
+          } catch (handleErr) {
+            // inline editor：缓存句柄可能已失效/权限过期（跨会话恢复的句柄常见）。
+            // 此时不要直接报错，落到下面的父页面桥接直写原文件。
+            if (!isIframe) throw handleErr;
+            console.warn(
+              '[MDnote] Stale file handle in inline editor, falling back to parent bridge:',
+              handleErr,
+            );
+          }
         }
         // 无句柄（浏览器打开的文件/新建文档）：
+        // - inline editor（iframe 模式）：桥接父页面**直写原文件**（不是另存为）
         // - 有路径：查缓存句柄直写；无缓存则弹一次"定位原文件"拿句柄写回原路径
         // - 无路径：另存为（新建文档保存）
+        if (isIframe) {
+          // #3 Save：写回打开时的原文件。父页面首次会弹一次授权（显示原路径+
+          // 原文件名），授权后直接覆盖原文件；同一会话后续保存全静默。
+          // 注意：这里不能再回退到 saveAs()——那会退化成「另存为」，正是用户
+          // 反馈的「两次确认 + 路径不对」的根因。
+          const res = await saveInlineToOriginal(
+            state.content,
+            state.fileName,
+            state.filePath,
+          );
+          if (res.ok) {
+            // 写回的是原文件：保留原绝对路径，不要退化成裸文件名
+            if (res.path && /^([a-zA-Z]:)?[\\/]/.test(res.path)) {
+              setFilePath(res.path);
+            }
+            setDirty(false);
+            setSaveState('disk-saved');
+            useAppStore.getState().setDiskWriteFailed(false);
+            return true;
+          }
+          if (res.cancelled) return false; // 用户取消 → 不提示"Saved!"
+          console.error('[MDnote] Inline save to original file failed:', res.error);
+          showToast(res.error || 'Failed to save to the original file', 'error');
+          useAppStore.getState().setDiskWriteFailed(true);
+          return false;
+        }
         if (state.filePath) {
           const { generateFileId, pickOriginalFileHandle } = await import('../lib/platform');
           const { getHandle, saveHandle } = await import('../lib/indexeddb');
@@ -377,7 +529,7 @@ export function useFileOps() {
       showToast('Failed to save file', 'error');
       return false;
     }
-  }, [setDirty, setSaveState, saveAs, showToast]);
+  }, [setDirty, setSaveState, setFilePath, saveAs, showToast]);
 
   /**
    * Render preview and TOC from current content.
