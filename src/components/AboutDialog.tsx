@@ -7,7 +7,7 @@ const CURRENT_VERSION = isExtension ? '0.2.1' : '0.4.2';
 const TAG_PREFIX = isExtension ? 'extension-v' : 'desktop-v';
 const GITHUB_REPO = 'https://github.com/Robot-teak/mdnote';
 const GITHUB_AUTHOR = 'https://github.com/Robot-teak';
-const GITHUB_RELEASES_API = 'https://api.github.com/repos/Robot-teak/mdnote/releases?per_page=5';
+const GITHUB_RELEASES_API = 'https://api.github.com/repos/Robot-teak/mdnote/releases?per_page=30';
 
 interface AboutDialogProps {
   onClose: () => void;
@@ -59,8 +59,19 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
         return;
       }
 
-      const latest = myReleases[0];
-      const latestVersion = latest.tag_name.replace(/^[a-z]+-v/, '');
+      // Pick the highest version among matching releases. The GitHub API
+      // orders by publish date, not semver — a re-publish with an older date
+      // or a long run of the other product line could otherwise surface a
+      // stale version as "latest".
+      let latest = myReleases[0];
+      let latestVersion = latest.tag_name.replace(/^[a-z]+-v/, '');
+      for (const r of myReleases) {
+        const v = r.tag_name.replace(/^[a-z]+-v/, '');
+        if (compareVersions(v, latestVersion) > 0) {
+          latest = r;
+          latestVersion = v;
+        }
+      }
       const htmlUrl = latest.html_url;
 
       if (compareVersions(latestVersion, CURRENT_VERSION) > 0) {
