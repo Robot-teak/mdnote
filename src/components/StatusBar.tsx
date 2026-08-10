@@ -1,5 +1,6 @@
 import { useAppStore } from '../store/useAppStore';
-import { isExtension, isDesktop } from '../lib/platform';
+import { isExtension, isDesktop, isIframe } from '../lib/platform';
+import { formatAutoSaveInterval, getEffectiveAutoSaveInterval } from '../lib/constants';
 
 /**
  * Status bar at the bottom of the window.
@@ -9,9 +10,27 @@ import { isExtension, isDesktop } from '../lib/platform';
  * - 移除 reveal_in_finder 按钮（R02，插件版无对应 API）
  * - 显示三态保存状态（Q26：dirty / draft-saved / disk-saved）
  * - S22 句柄失效时显示"需重新授权"提示
+ *
+ * v0.2.1：勾选框与设置弹窗的 Auto-Save 档位双向联动 ——
+ * 两者共用唯一真源 `settings.autoSaveInterval`，勾选框只是它的布尔视图。
  */
 export default function StatusBar() {
-  const { content, isDirty, filePath, autoSaveEnabled, setAutoSaveEnabled, saveState, fileHandle, diskWriteFailed } = useAppStore();
+  const content = useAppStore((s) => s.content);
+  const isDirty = useAppStore((s) => s.isDirty);
+  const filePath = useAppStore((s) => s.filePath);
+  const saveState = useAppStore((s) => s.saveState);
+  const fileHandle = useAppStore((s) => s.fileHandle);
+  const diskWriteFailed = useAppStore((s) => s.diskWriteFailed);
+  const autoSaveInterval = useAppStore((s) => s.settings.autoSaveInterval);
+  const setAutoSaveEnabled = useAppStore((s) => s.setAutoSaveEnabled);
+
+  // 实际生效间隔（inline 模式下有 15s 下限护栏），文案要显示真实生效值
+  const effectiveInterval = getEffectiveAutoSaveInterval(autoSaveInterval, isExtension && isIframe);
+  const autoSaveEnabled = effectiveInterval > 0;
+  const autoSaveLabel = `Auto-save (${formatAutoSaveInterval(effectiveInterval)})`;
+  const autoSaveTitle = autoSaveEnabled
+    ? `Auto-save every ${formatAutoSaveInterval(effectiveInterval)} — change the interval in Settings › Auto-Save`
+    : 'Auto-save is off — nothing is written automatically. Change it in Settings › Auto-Save';
 
   const lineCount = content ? content.split('\n').length : 0;
   const charCount = content?.length || 0;
@@ -80,13 +99,13 @@ export default function StatusBar() {
             ⚠️ Re-auth needed
           </span>
         )}
-        <label className="status-item auto-save-toggle" title="Auto-save (60s interval)">
+        <label className="status-item auto-save-toggle" title={autoSaveTitle}>
           <input
             type="checkbox"
             checked={autoSaveEnabled}
             onChange={(e) => setAutoSaveEnabled(e.target.checked)}
           />
-          <span>Auto-save</span>
+          <span>{autoSaveLabel}</span>
         </label>
         <span className="status-separator">|</span>
         <span className={`status-item save-status save-${saveState}`}>

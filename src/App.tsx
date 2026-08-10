@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore, useHydrated, onHydrated, hydrateFromStorage } from './store/useAppStore';
+import type { EditorSettings } from './types';
+import { PREVIEW_DEBOUNCE, resolvePreviewFontStack } from './lib/constants';
 import './styles/globals.css';
 
 // 安全组件
@@ -160,17 +162,26 @@ async function updateWindowTitle(filePath: string | null, isDirty: boolean) {
 
 // ─── AppInner: 所有业务逻辑 ───
 
-function applySettingsToCSS(settings: {
-  fontFamily: string;
-  fontSize: number;
-  lineHeight: number;
-  previewParagraphSpacing: string;
-}): void {
+/**
+ * 把用户设置写成 <html> 上的 CSS 变量。
+ *
+ * 注意必须写在 documentElement 上：globals.css 里只用 `:root` 定义变量，
+ * 裸的 `[data-theme='light']` 会匹配到 .app-container 把变量盖回默认值。
+ *
+ * @param settings 当前编辑器设置
+ */
+function applySettingsToCSS(settings: EditorSettings): void {
   const root = document.documentElement;
   root.style.setProperty('--editor-font-family', `'${settings.fontFamily}', Menlo, monospace`);
   root.style.setProperty('--editor-font-size', `${settings.fontSize}px`);
   root.style.setProperty('--editor-line-height', String(settings.lineHeight));
   root.style.setProperty('--preview-paragraph-spacing', settings.previewParagraphSpacing);
+  // v0.2.1：预览区字号/字体族独立于编辑器（Bug 5）
+  root.style.setProperty('--preview-font-size', `${settings.previewFontSize}px`);
+  root.style.setProperty(
+    '--preview-font-family',
+    resolvePreviewFontStack(settings.previewFontFamily, settings.fontFamily),
+  );
 }
 
 function AppInner() {
@@ -597,20 +608,22 @@ function AppInner() {
   // 快捷键保存（与工具栏行为一致）
   useShortcuts({ onSave: handleSave });
 
-  // 内容变化 → 预览+TOC 更新（150ms 防抖）
+  // 内容变化 → 预览+TOC 更新（PREVIEW_DEBOUNCE 防抖，150ms）
   // 注意：不要在这里 setDirty——dirty 只由 EditorPane 的 updateListener（用户编辑）
   // 设置。否则打开文件/切换视图模式挂载编辑器时会误置"未保存"。
+  //
+  // v0.2.1：移除这里原本每次按键写 store 的 setSavedScrollTop(scrollTop)。
+  // 该值已无人读取——PreviewPane 现在在写 innerHTML 的同一帧内原子保住滚动位置，
+  // 不再需要外部快照。而它每次按键都触发一次 store 更新，会连带把所有做全量
+  // useAppStore() 订阅的组件（Toolbar / TocSidebar / EditorPane…）一起重渲染，
+  // 正是预览闪烁链路里的一环。
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleContentChange = useCallback((newContent: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    const scrollEl = document.querySelector('.preview-pane');
-    const currentScrollTop = scrollEl ? scrollEl.scrollTop : 0;
-    const { setSavedScrollTop } = useAppStore.getState();
-    setSavedScrollTop(currentScrollTop);
 
     debounceRef.current = setTimeout(() => {
       updatePreview(newContent);
-    }, 150);
+    }, PREVIEW_DEBOUNCE);
 
     // 内容变化 → 3s 后快速自动保存（草稿/写盘），防刷新丢内容（performSave 内部有 isDirty 检查）
     scheduleQuickSave();
@@ -643,8 +656,13 @@ function AppInner() {
         {/* TOC 侧栏 */}
         <TocSidebar onHeadingClick={handleTocJump} onOpenFile={openFile} onOpenFileByContent={openFileByContent} />
 
-        {/* 主内容 */}
-        <main className="editor-preview-container">
+        {/* 主内容（split 互换用 class 而非内联 style —— 分隔线也要跟着换边） */}
+        <main
+          className={
+            'editor-preview-container' +
+            (settings.splitLayout === 'editor-right' ? ' split-reversed' : '')
+          }
+        >
           {isWelcome ? (
             <WelcomeScreen onOpenFile={openFile} onNewDocument={newDocument} />
           ) : (

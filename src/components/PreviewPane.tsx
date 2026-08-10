@@ -85,45 +85,59 @@ function processImageUrls(html: string, filePath: string | null): string {
 
 /**
  * Preview pane — renders HTML output from the Markdown parser.
- * Uses dangerouslySetInnerHTML for the rendered Markdown (sanitized via DOMPurify).
- * Supports both light and dark themes via data-theme.
  *
  * M04 改造：
  * - 移除直接 convertFileSrc 调用，改用 platform.convertFileSrc
  * - 渲染前调 sanitize.sanitizeHtml 过滤（P0 XSS 加固）
  * - 同步滚动逻辑（data-source-line）保持不变
+ *
+ * v0.2.1（Bug 6 防闪烁）改造 —— 结构从「早返回换整棵子树」改为「恒定容器 + 覆盖层」：
+ * - 滚动容器 `.preview-pane` 与内容容器 `.preview-content` 分离，两者**永不卸载**；
+ *   loading / empty 变成绝对定位覆盖层，不再替换 DOM。
+ * - HTML 用 `useLayoutEffect` 手动写 innerHTML，前后原子保存/恢复 scrollTop，
+ *   浏览器绘制前完成，用户看不到中间态。
+ * - 内容未变化时直接跳过写入；切换文档时滚动回顶部。
+ * - store 改用逐项 selector 订阅（原为无 selector 全量订阅，任意 store 变更都重渲染）。
+ *
+ * 注意：`.preview-content` 的 children 完全由 innerHTML 接管，
+ * 不能在其中再放任何 JSX 子元素，否则 React 与手动 DOM 写入会互相踩踏。
  */
 export default function PreviewPane() {
-  const { htmlPreview, isPreviewLoading, theme, savedScrollTop, settings, filePath } = useAppStore();
+  // 逐项 selector 订阅：避免无关 store 变更触发重渲染
+  const htmlPreview = useAppStore((s) => s.htmlPreview);
+  const isPreviewLoading = useAppStore((s) => s.isPreviewLoading);
+  const theme = useAppStore((s) => s.theme);
+  const filePath = useAppStore((s) => s.filePath);
+  const codeBlockTheme = useAppStore((s) => s.settings.codeBlockTheme);
+  const autoThemeFollow = useAppStore((s) => s.settings.autoThemeFollow);
+  const codeBlockThemeManuallySet = useAppStore((s) => s.settings.codeBlockThemeManuallySet);
+
+  /** 滚动容器（`.preview-pane`），承载 overflow-y:auto */
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  /** 内容容器（`.preview-content`），children 由 innerHTML 接管 */
   const containerRef = useRef<HTMLDivElement>(null);
   // 保存预览区滚动位置的 ref
   const scrollPosRef = useRef(0);
   // 追踪当前加载的 hljs 主题 link 元素
   const currentThemeLinkRef = useRef<HTMLLinkElement | null>(null);
 
-  // 监听滚动事件，实时保存滚动位置
+  // 监听滚动事件，实时保存滚动位置。
+  // 容器现在恒定存在，挂载时一定拿得到节点（旧实现在 isPreviewLoading=true
+  // 时早返回，containerRef 为 null，监听器永远挂不上）。
   useEffect(() => {
-    const el = containerRef.current;
+    const el = scrollerRef.current;
     if (!el) return;
     const handleScroll = () => { scrollPosRef.current = el.scrollTop; };
     el.addEventListener('scroll', handleScroll, { passive: true });
     return () => el.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // savedScrollTop > 0 时恢复滚动
-  useLayoutEffect(() => {
-    if (savedScrollTop > 0) {
-      const el = containerRef.current;
-      if (el) el.scrollTop = savedScrollTop;
-    }
-  }, [savedScrollTop]);
-
   // 动态加载/切换 hljs 主题 CSS
   useEffect(() => {
-    let themeName = settings.codeBlockTheme;
+    let themeName = codeBlockTheme;
 
     // 如果设置了跟随系统主题且用户没有手动选择
-    if (settings.autoThemeFollow && !settings.codeBlockThemeManuallySet) {
+    if (autoThemeFollow && !codeBlockThemeManuallySet) {
       themeName = getDefaultThemeForMode(theme);
     }
 
@@ -148,7 +162,7 @@ export default function PreviewPane() {
         currentThemeLinkRef.current = null;
       }
     };
-  }, [settings.codeBlockTheme, theme, settings.autoThemeFollow, settings.codeBlockThemeManuallySet]);
+  }, [codeBlockTheme, theme, autoThemeFollow, codeBlockThemeManuallySet]);
 
   // TOC 跳转监听：直接用 containerRef
   useEffect(() => {
@@ -254,28 +268,62 @@ export default function PreviewPane() {
     return sanitized;
   }, [htmlPreview, filePath]);
 
-  if (isPreviewLoading) {
-    return (
-      <div className="preview-pane loading">
-        <div className="preview-loading-indicator">
+  /**
+   * 手动写入 innerHTML（替代 dangerouslySetInnerHTML）。
+   *
+   * 用 useLayoutEffect 而非 useEffect：DOM 写入与滚动恢复都在浏览器绘制前完成，
+   * 用户看不到任何中间态。
+   *
+   * 用 `lastHtmlRef` 而不是读 `el.innerHTML` 来判重：innerHTML 的 getter 会把整棵
+   * DOM 重新序列化（大文档上很贵），且浏览器会规范化属性/自闭合标签，
+   * 序列化结果常常与写入的字符串不相等，判重会失效导致每次都重写。
+   */
+  const lastHtmlRef = useRef<string | null>(null);
+  const lastFilePathRef = useRef<string | null>(filePath);
+
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    const scroller = scrollerRef.current;
+    if (!el) return;
+
+    const fileChanged = lastFilePathRef.current !== filePath;
+    // 同一文档且内容没变 → 完全不碰 DOM
+    if (!fileChanged && lastHtmlRef.current === processedHtml) return;
+
+    const prevScrollTop = scroller ? scroller.scrollTop : 0;
+    el.innerHTML = processedHtml;
+    lastHtmlRef.current = processedHtml;
+
+    if (scroller) {
+      // 换文档 → 回到顶部（否则新文档会停在上一个文档的滚动位置）；
+      // 同一文档的增量更新 → 原地保住滚动位置，绘制前完成，无跳动。
+      scroller.scrollTop = fileChanged ? 0 : prevScrollTop;
+    }
+    lastFilePathRef.current = filePath;
+  }, [processedHtml, filePath]);
+
+  // 首次加载（还没有任何已渲染内容）才显示 Rendering 覆盖层。
+  // 打字时的增量更新不再置 isPreviewLoading，因此不会闪。
+  const showLoadingOverlay = isPreviewLoading && !htmlPreview;
+  const showEmptyOverlay = !isPreviewLoading && !htmlPreview;
+
+  return (
+    <div ref={scrollerRef} className={`preview-pane ${theme}`}>
+      {/* 内容容器：children 由 useLayoutEffect 的 innerHTML 独占，勿放 JSX 子元素 */}
+      <div ref={containerRef} className="preview-content" />
+
+      {showLoadingOverlay && (
+        <div className="preview-overlay" role="status" aria-live="polite">
           <span className="loading-spinner" />
           Rendering...
         </div>
-      </div>
-    );
-  }
+      )}
 
-  if (!htmlPreview) {
-    return (
-      <div className="preview-pane empty">
-        <div className="preview-empty-hint">
+      {showEmptyOverlay && (
+        <div className="preview-overlay">
           Start typing to see the preview…
         </div>
-      </div>
-    );
-  }
-
-  return (
-    <div ref={containerRef} className={`preview-pane ${theme}`} dangerouslySetInnerHTML={{ __html: processedHtml }} />
+      )}
+    </div>
   );
 }

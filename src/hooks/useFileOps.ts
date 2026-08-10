@@ -534,6 +534,13 @@ export function useFileOps() {
   /**
    * Render preview and TOC from current content.
    * Called by the EditorPane's onContentChange callback (debounced externally).
+   *
+   * v0.2.1（Bug 6 防闪烁）：
+   * - **不再置 `isPreviewLoading`** —— 打字时每次防抖都置 loading 会让 PreviewPane
+   *   闪一次「Rendering…」（真正的闪烁根因）。loading 只保留给首次打开文件的路径
+   *   （openFile / openFileByContent）。
+   * - 移除 rAF 补 scrollTop 的补丁 —— PreviewPane 的 useLayoutEffect 已在写入
+   *   innerHTML 的同一帧内原子保住滚动位置，两处同时设置会互相打架产生抖动。
    */
   const updatePreview = useCallback(
     async (markdownContent: string) => {
@@ -544,27 +551,18 @@ export function useFileOps() {
       }
 
       try {
-        setIsPreviewLoading(true);
         const [html, toc] = await Promise.all([
           renderMarkdown(markdownContent),
           extractTocFromWorker(markdownContent),
         ]);
         setHtmlPreview(html);
-        // 等 React 渲染完成后恢复滚动位置
-        const savedScroll = useAppStore.getState().savedScrollTop;
-        if (savedScroll > 0) {
-          requestAnimationFrame(() => {
-            const el = document.querySelector('.preview-pane');
-            if (el) el.scrollTop = savedScroll;
-          });
-        }
         setTocItems(toc);
       } catch (err) {
+        console.error('[MDnote] Preview render failed:', err);
         showToast('Failed to render preview', 'error');
-        setIsPreviewLoading(false);
       }
     },
-    [setHtmlPreview, setTocItems, setIsPreviewLoading, showToast],
+    [setHtmlPreview, setTocItems, showToast],
   );
 
   return { openFile, openFileByContent, newDocument, saveAs, directSave, updatePreview };

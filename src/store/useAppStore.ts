@@ -138,6 +138,19 @@ function saveSettings(settings: EditorSettings): void {
   syncSetItem('mdnote-settings', JSON.stringify(settings));
 }
 
+/**
+ * 记忆用户上一次选择的非 0 自动保存间隔。
+ *
+ * StatusBar 的勾选框取消再勾上时，需要恢复到用户原来的档位而不是硬回默认值。
+ * 只是一个 UI 便利缓存，不是状态真源——真源永远是 `settings.autoSaveInterval`。
+ */
+let lastNonZeroAutoSaveInterval: number = DEFAULT_EDITOR_SETTINGS.autoSaveInterval;
+
+/** 记录非 0 间隔（供勾选框恢复用） */
+function rememberAutoSaveInterval(interval: number): void {
+  if (interval > 0) lastNonZeroAutoSaveInterval = interval;
+}
+
 // ──────────────────────────────────────────────
 // Store 类型定义
 // ──────────────────────────────────────────────
@@ -171,9 +184,13 @@ interface AppState {
   isPreviewLoading: boolean;
   /** Whether to show the welcome screen (true = initial launch, no user action yet) */
   isWelcome: boolean;
-  /** Whether auto-save is enabled (default: false) */
-  autoSaveEnabled: boolean;
-  /** Saved scroll position (0-indexed) for PreviewPane scroll restoration */
+  /**
+   * Saved scroll position (0-indexed) for PreviewPane scroll restoration.
+   *
+   * @deprecated v0.2.1 起不再有任何读取方：PreviewPane 在写 innerHTML 的同一帧内
+   * 原子保存/恢复 scrollTop，无需外部快照。保留字段与 action 仅为兼容，
+   * **不要在新代码里写它**——每次按键写 store 会连带重渲染所有全量订阅的组件。
+   */
   savedScrollTop: number;
   /** Editor customization settings */
   settings: EditorSettings;
@@ -197,7 +214,15 @@ interface AppState {
   setTocItems: (items: TocItem[]) => void;
   setHtmlPreview: (html: string) => void;
   setIsPreviewLoading: (loading: boolean) => void;
+  /**
+   * 自动保存开关（兼容垫片）。
+   *
+   * v0.2.1 起 `settings.autoSaveInterval` 是唯一真源，本方法只是把布尔开关
+   * 映射过去：关 → interval=0；开 → 恢复上一次的非 0 档位（无记录则用默认 60s）。
+   * 顺带让自动保存开关变成持久化的（旧实现是 store 内非持久化 boolean，重启即丢）。
+   */
   setAutoSaveEnabled: (enabled: boolean) => void;
+  /** @deprecated 见 `savedScrollTop`，v0.2.1 起无消费方 */
   setSavedScrollTop: (top: number) => void;
   updateSettings: (partial: Partial<EditorSettings>) => void;
   resetSettings: () => void;
@@ -225,11 +250,13 @@ const initialState = {
   htmlPreview: '',
   isPreviewLoading: false,
   isWelcome: true,
-  autoSaveEnabled: true,
   savedScrollTop: 0,
   settings: loadSettings(),
   diskWriteFailed: false,
 };
+
+// 用已持久化的设置初始化「上次非 0 间隔」记忆
+rememberAutoSaveInterval(initialState.settings.autoSaveInterval);
 
 // ──────────────────────────────────────────────
 // Store 创建
@@ -280,12 +307,27 @@ export const useAppStore = create<AppState>((set, get) => ({
   setTocItems: (items: TocItem[]) => set({ tocItems: items }),
   setHtmlPreview: (html: string) => set({ htmlPreview: html, isPreviewLoading: false }),
   setIsPreviewLoading: (loading: boolean) => set({ isPreviewLoading: loading }),
-  setAutoSaveEnabled: (enabled: boolean) => set({ autoSaveEnabled: enabled }),
+  setAutoSaveEnabled: (enabled: boolean) => {
+    const { settings, updateSettings } = get();
+    if (enabled) {
+      if (settings.autoSaveInterval > 0) return; // 已经是开启状态
+      const restored = lastNonZeroAutoSaveInterval > 0
+        ? lastNonZeroAutoSaveInterval
+        : DEFAULT_EDITOR_SETTINGS.autoSaveInterval;
+      updateSettings({ autoSaveInterval: restored });
+      return;
+    }
+    if (settings.autoSaveInterval === 0) return; // 已经是关闭状态
+    rememberAutoSaveInterval(settings.autoSaveInterval);
+    updateSettings({ autoSaveInterval: 0 });
+  },
+
   setSavedScrollTop: (top: number) => set({ savedScrollTop: top }),
 
   updateSettings: (partial: Partial<EditorSettings>) => {
     const current = get().settings;
     const next = { ...current, ...partial };
+    rememberAutoSaveInterval(next.autoSaveInterval);
     saveSettings(next);
     // 插件版同时写入 chrome.storage（异步）
     if (isExtension) {
@@ -295,6 +337,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   resetSettings: () => {
+    rememberAutoSaveInterval(DEFAULT_EDITOR_SETTINGS.autoSaveInterval);
     saveSettings({ ...DEFAULT_EDITOR_SETTINGS });
     if (isExtension) {
       asyncSetItem('mdnote-settings', JSON.stringify({ ...DEFAULT_EDITOR_SETTINGS })).catch(() => {});
@@ -344,6 +387,7 @@ export async function hydrateFromStorage(): Promise<void> {
       try {
         const parsed = JSON.parse(settingsVal) as Partial<EditorSettings>;
         const next = { ...DEFAULT_EDITOR_SETTINGS, ...parsed };
+        rememberAutoSaveInterval(next.autoSaveInterval);
         useAppStore.setState({ settings: next });
       } catch {
         // Ignore parse errors

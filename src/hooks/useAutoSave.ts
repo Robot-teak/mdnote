@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
-import { AUTO_SAVE_INTERVAL } from '../lib/constants';
+import { getEffectiveAutoSaveInterval } from '../lib/constants';
 import {
   isExtension,
   isIframe,
@@ -9,17 +9,35 @@ import {
   isInteractiveInlineSaveInFlight,
 } from '../lib/platform';
 
+/** 内容变化后快速保存的防抖时长（ms） */
+const QUICK_SAVE_DELAY = 3000;
+
 /**
  * Auto-save hook.
  *
  * 双产物线：
- * - 插件版：IndexedDB 草稿自动保存（60s 间隔，无感无需授权）+ 显式"保存到磁盘"用 platform.writeFile
- * - 桌面版：60s invoke('write_file') 写原文件（保留原逻辑）
+ * - 插件版：IndexedDB 草稿自动保存（无感无需授权）+ 显式"保存到磁盘"用 platform.writeFile
+ * - 桌面版：invoke('write_file') 写原文件（保留原逻辑）
  *
  * 三态状态数据层（Q26）：dirty / draft-saved / disk-saved，供 StatusBar UI 展示。
+ *
+ * v0.2.1（自动保存频率可配）：
+ * - 间隔由 `settings.autoSaveInterval` 决定，**它是自动保存开关的唯一真源**
+ *   （0 = 关闭）。store 里原来那个非持久化的 `autoSaveEnabled` boolean 已移除，
+ *   避免「设置里选了 OFF、重启后勾选框又自己勾上」这类双状态源不一致。
+ * - 关闭时**周期保存与 3s 快捷保存一并停**：用户既然说了不自动保存，
+ *   后台就不应再落盘。
+ * - inline（iframe）模式对间隔取 15s 下限护栏：桥接静默保存超时 15s，
+ *   更短的间隔会让在途请求叠加堆积。
  */
 export function useAutoSave() {
-  const autoSaveEnabled = useAppStore((s) => s.autoSaveEnabled);
+  const autoSaveInterval = useAppStore((s) => s.settings.autoSaveInterval);
+  // 实际生效间隔（inline 模式下有 15s 下限）；0 = 关闭
+  const effectiveInterval = getEffectiveAutoSaveInterval(
+    autoSaveInterval,
+    isExtension && isIframe,
+  );
+  const autoSaveEnabled = effectiveInterval > 0;
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastSavedHash = useRef<string>('');
 
@@ -216,12 +234,13 @@ export function useAutoSave() {
       intervalRef.current = null;
     }
 
+    // interval = 0（用户选了「不自动保存」）→ 不建定时器，完全不落盘
     if (!autoSaveEnabled) return;
 
-    // 定时器常驻：每 60s 检查一次（performSave 内部通过 contentHash 跳过
-    // 空内容/重复内容）。不依赖 filePath/content——新建文档输入内容后
+    // 定时器常驻：每 effectiveInterval 检查一次（performSave 内部通过 contentHash
+    // 跳过空内容/重复内容）。不依赖 filePath/content——新建文档输入内容后
     // 也能在下一个周期自动保存（修复：new 后 interval 被清导致草稿不保存）
-    intervalRef.current = setInterval(performSave, AUTO_SAVE_INTERVAL);
+    intervalRef.current = setInterval(performSave, effectiveInterval);
 
     return () => {
       if (intervalRef.current) {
@@ -229,19 +248,39 @@ export function useAutoSave() {
         intervalRef.current = null;
       }
     };
-  }, [autoSaveEnabled, performSave]);
+  }, [autoSaveEnabled, effectiveInterval, performSave]);
 
-  // 内容变化后快速保存（防抖 3s）：避免等待 60s 周期——编辑后停顿几秒即落盘/存草稿，
-  // 刷新或关闭标签页时内容基本已保存（performSave 内部有 isDirty + contentHash 检查，无修改不动作）
+  // 内容变化后快速保存（防抖 3s）：避免等待整个周期——编辑后停顿几秒即落盘/存草稿，
+  // 刷新或关闭标签页时内容基本已保存（performSave 内部有 isDirty + contentHash 检查，无修改不动作）。
+  // 自动保存关闭时一并停：用户明确表示不要自动落盘。
   const quickSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleQuickSave = useCallback(() => {
+    if (quickSaveTimer.current) {
+      clearTimeout(quickSaveTimer.current);
+      quickSaveTimer.current = null;
+    }
     if (!autoSaveEnabled) return;
-    if (quickSaveTimer.current) clearTimeout(quickSaveTimer.current);
     quickSaveTimer.current = setTimeout(() => {
       quickSaveTimer.current = null;
       performSave();
-    }, 3000);
+    }, QUICK_SAVE_DELAY);
   }, [autoSaveEnabled, performSave]);
+
+  // 卸载 / 关闭自动保存时清掉在途的快捷保存定时器，避免关掉开关后还落一次盘
+  useEffect(() => {
+    if (autoSaveEnabled) return;
+    if (quickSaveTimer.current) {
+      clearTimeout(quickSaveTimer.current);
+      quickSaveTimer.current = null;
+    }
+  }, [autoSaveEnabled]);
+
+  useEffect(() => () => {
+    if (quickSaveTimer.current) {
+      clearTimeout(quickSaveTimer.current);
+      quickSaveTimer.current = null;
+    }
+  }, []);
 
   return { saveNow, scheduleQuickSave };
 }
