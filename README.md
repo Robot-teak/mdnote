@@ -37,7 +37,7 @@ Both share the same core editing engine (CodeMirror 6 + markdown-it + highlight.
 - 🔀 **3 View Modes** — Editor only / Split / Preview only
 - 🌳 **TOC Sidebar** — Auto-extracted heading outline with hierarchical tree view
 - 🎨 **Light/Dark Themes** — CSS Variables, instant switching
-- 💾 **Auto-Save** — 3-second debounced auto-save
+- 💾 **Auto-Save** — Configurable interval (10s / 30s / 1m / 2m / 3m / 5m, or off)
 - 📂 **File Association** — Open `.md` files directly from Finder ("Open With")
 - ⌨️ **Keyboard Shortcuts** — Full shortcut coverage
 - 📄 **Export** — HTML (inline styles) / PDF
@@ -49,7 +49,7 @@ Both share the same core editing engine (CodeMirror 6 + markdown-it + highlight.
 2. Open the DMG and drag **MDnote** to Applications
 3. macOS 12+ required
 
-> If you see "MDnote is damaged", right-click → Open (first launch requires Gatekeeper bypass for unsigned apps).
+> If you see "MDnote is damaged", run `xattr -cr /Applications/MDnote.app` in Terminal (the app is ad-hoc signed).
 
 ### Tech Stack
 
@@ -141,8 +141,8 @@ MDnote maintains **two independent version lines**:
 
 | Product | Version | Tag Prefix | Release Example |
 |---------|---------|-----------|-----------------|
-| Desktop | 0.4.x | `desktop-v*` | `desktop-v0.4.1` |
-| Chrome Extension | 0.1.x | `extension-v*` | `extension-v0.1.8` |
+| Desktop | 0.4.x | `desktop-v*` | `desktop-v0.4.2` |
+| Chrome Extension | 0.2.x | `extension-v*` | `extension-v0.2.1` |
 
 Shared code changes flow to both products automatically. Each product is released independently — a desktop release does not force an extension release and vice versa.
 
