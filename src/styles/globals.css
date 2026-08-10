@@ -15,7 +15,7 @@
   --editor-line-height: 1.5;
   --preview-paragraph-spacing: 1em;
   /* 预览区独立字号/字体族（v0.2.1）；未设置时回退到编辑器变量 */
-  --preview-font-size: 16px;
+  --preview-font-size: 14px;
   --preview-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 

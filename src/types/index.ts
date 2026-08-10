@@ -33,7 +33,7 @@ export interface EditorSettings {
    * 这是自动保存开关的唯一真源，StatusBar 勾选框只是它的派生视图。
    */
   autoSaveInterval: number;
-  /** 预览区字号（px），独立于编辑器字号，默认 16 */
+  /** 预览区字号（px），独立于编辑器字号，默认 14（与编辑器默认字号一致） */
   previewFontSize: number;
   /**
    * 预览区字体族 token（见 constants.PREVIEW_FONT_OPTIONS），默认 'system'。
@@ -56,7 +56,7 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   autoThemeFollow: true,
   splitLayout: 'editor-left',
   autoSaveInterval: 60_000,
-  previewFontSize: 16,
+  previewFontSize: 14,
   previewFontFamily: 'system',
 };
 
