@@ -1,0 +1,62 @@
+sequenceDiagram
+    autonumber
+    participant U as 用户
+    participant EP as EditorPane
+    participant App as App.handleContentChange
+    participant FO as useFileOps.updatePreview
+    participant PV as PreviewPane
+    participant W as md-worker
+    participant S as useAppStore
+
+    Note over U,S: 当前（Bug 6 闪烁）流程 —— 根因在 isPreviewLoading 早返回
+    U->>EP: 按键输入
+    EP->>App: setContent
+    App->>S: setSavedScrollTop()  ← 每次按键写 store
+    App->>App: 150ms 防抖
+    App->>FO: updatePreview()
+    FO->>S: setIsPreviewLoading(true)  ★ 罪魁
+    S-->>PV: isPreviewLoading = true
+    PV->>PV: 命中早返回 → 卸载内容 DOM，渲染 spinner「Rendering…」
+    FO->>W: 请求渲染
+    W-->>FO: html 字符串（hljs 高亮已烘焙进字符串）
+    FO->>S: setHtmlPreview(html) + isPreviewLoading:false
+    S-->>PV: 重渲染 → 挂载全新 .preview-pane（scrollTop=0）
+    PV->>PV: requestAnimationFrame 补 scrollTop（事后补丁）
+
+    Note over U,S: 修正后流程（去 loading + 恒定容器 + useLayoutEffect 保滚动）
+    U->>EP: 按键输入
+    EP->>App: setContent
+    App->>App: 150ms 防抖（维持，不拉 400ms）
+    App->>FO: updatePreview()
+    Note right of FO: 不再 setIsPreviewLoading
+    FO->>W: 请求渲染
+    W-->>FO: html 字符串
+    FO->>S: setHtmlPreview(html)
+    S-->>PV: htmlPreview 变更
+    PV->>PV: useLayoutEffect → 内容相同则跳过；否则 innerHTML + 绘制前恢复 scrollTop
+    Note right of PV: 无早返回、无 spinner、无闪白、滚动不跳
+
+---
+
+sequenceDiagram
+    autonumber
+    participant Timer as setInterval
+    participant AS as useAutoSave
+    participant S as useAppStore(autoSaveInterval)
+    participant FO as useFileOps
+    participant Bridge as saveInlineToOriginal / writeFile
+
+    Note over Timer,Bridge: 自动保存频率可配（T04）—— autoSaveInterval 为唯一真源
+    S-->>AS: autoSaveInterval 变化 → 重建定时器
+    alt autoSaveInterval > 0
+        Timer->>AS: 触发 performSave()
+        AS->>FO: 保存
+        alt isIframe (inline 模式)
+            FO->>Bridge: saveInlineToOriginal({silentOnly:true})
+            Note right of Bridge: 桥接父页面，超时 15s → 需护栏（间隔≥15s 或在途跳过，R3）
+        else 桌面 / 独立标签
+            FO->>Bridge: writeFile(handle) / invoke('write_file')
+        end
+    else autoSaveInterval == 0 (OFF)
+        Note over AS: 不建定时器，autoSaveEnabled 派生为 false
+    end

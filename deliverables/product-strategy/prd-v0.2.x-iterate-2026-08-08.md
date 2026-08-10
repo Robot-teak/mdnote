@@ -153,7 +153,7 @@
 
 **修复方案**：
 
-- **分离设置**：`EditorSettings` 新增 `previewFontSize: number`，默认 16px
+- **分离设置**：`EditorSettings` 新增 `previewFontSize: number`，默认 14px（与编辑器默认字号一致）
 - `applySettingsToCSS` 中单独设置 `--preview-font-size` CSS 变量
 - `.preview-pane` 使用 `var(--preview-font-size)` 而非 `var(--editor-font-size)`
 - SettingsDialog 的 Preview tab 中添加独立字号滑块（范围 12-24px）
@@ -161,7 +161,7 @@
 **改动点**：
 | 文件 | 改动 |
 |------|------|
-| `types/index.ts` | `EditorSettings` 加 `previewFontSize`，`DEFAULT_EDITOR_SETTINGS` 加默认值 16 |
+| `types/index.ts` | `EditorSettings` 加 `previewFontSize`，`DEFAULT_EDITOR_SETTINGS` 加默认值 14（与编辑器默认字号一致） |
 | `App.tsx` | `applySettingsToCSS` 加 `--preview-font-size` |
 | `styles/globals.css` | `.preview-pane` 改用 `var(--preview-font-size)` |
 | `components/SettingsDialog.tsx` | Preview tab 加字号设置 |

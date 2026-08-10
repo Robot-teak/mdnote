@@ -1,0 +1,75 @@
+classDiagram
+    direction LR
+
+    class EditorSettings {
+        <<interface>>
+        +string fontFamily
+        +number fontSize
+        +number lineHeight
+        +string codeTheme
+        +boolean followSystemTheme
+        +number paragraphSpacing
+        +boolean indent
+        +boolean wordWrap
+        +boolean lineNumbers
+        +string theme
+        +string splitLayout
+        +number autoSaveInterval
+        +number previewFontSize
+        +string previewFontFamily
+    }
+
+    class DEFAULT_EDITOR_SETTINGS {
+        <<const object>>
+        +EditorSettings value
+    }
+
+    class UseAppStore {
+        <<Zustand store>>
+        -EditorSettings settings
+        -string htmlPreview
+        -boolean isPreviewLoading
+        -string theme
+        -number savedScrollTop
+        -boolean autoSaveEnabled
+        +loadSettings() void
+        +updateSettings(patch) void
+        +resetSettings() void
+        +setHtmlPreview(html) void
+        +setIsPreviewLoading(b) void
+        +setContent(c) void
+        +setSavedScrollTop(n) void
+    }
+
+    class App {
+        <<React component>>
+        +applySettingsToCSS(settings) void
+        +handleContentChange(content) void
+    }
+
+    class PreviewPane {
+        <<React component>>
+        -HTMLElement containerRef
+        +renderHtml() void
+        +onScroll() void
+    }
+
+    class UseFileOps {
+        <<hook>>
+        +updatePreview() void
+        +openFileByContent(content) void
+    }
+
+    class UseAutoSave {
+        <<hook>>
+        +performSave() void
+        +scheduleQuickSave() void
+    }
+
+    DEFAULT_EDITOR_SETTINGS ..|> EditorSettings : 实现默认值
+    UseAppStore *-- EditorSettings : 持有 settings
+    App ..> UseAppStore : 读写
+    PreviewPane ..> UseAppStore : 订阅 htmlPreview/theme
+    UseFileOps ..> UseAppStore : setHtmlPreview/setIsPreviewLoading
+    App ..> UseFileOps : handleContentChange 调用 updatePreview
+    UseAutoSave ..> UseAppStore : 读 autoSaveInterval
