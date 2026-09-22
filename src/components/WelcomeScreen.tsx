@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { isExtension, openUrl } from '../lib/platform';
+import DraftRecoveryList from './DraftRecoveryList';
 
 /**
  * Welcome screen shown when no file is open.
@@ -7,7 +8,9 @@ import { isExtension, openUrl } from '../lib/platform';
  *
  * M11 改造：
  * - openLink 用 platform.openUrl（替代 invoke('open_url')）
- * - 最近文件列表已迁出到左侧栏 TocSidebar（首页时展示），此处不再渲染
+ * - 最近文件列表已于 R5 整体移除（原在左侧栏 TocSidebar 展示）
+ * - R6：未存档草稿表格列表挂在欢迎卡片内部（welcome-actions 之后、
+ *   welcome-shortcuts 之前），仅插件版渲染（桌面版草稿不进 IndexedDB）
  */
 interface WelcomeScreenProps {
   onOpenFile: () => void;
@@ -42,6 +45,9 @@ export default function WelcomeScreen({ onOpenFile, onNewDocument }: WelcomeScre
             ➕ New Document
           </button>
         </div>
+
+        {/* R6：未存档草稿列表（仅插件版；无草稿时组件自身不渲染） */}
+        {isExtension && <DraftRecoveryList />}
 
         <div className="welcome-shortcuts">
           <h3>Keyboard Shortcuts</h3>

@@ -76,9 +76,19 @@ export default function Toolbar({ onSave, hasFile = false, isDirty = false, onAb
       const { content: mdContent } = useAppStore.getState();
       const html = await exportAsHTML(mdContent, theme);
 
+      // R1（D3/C6）：所见即所得 —— 预览里正显示为图的 mermaid 块，
+      // 导出时内联已渲染的 SVG；显示为源码块的保持源码块。
+      let finalHtml = html;
+      try {
+        const { inlineMermaidIntoHtml } = await import('../lib/mermaid-preview');
+        finalHtml = inlineMermaidIntoHtml(html);
+      } catch (err) {
+        console.warn('[MDnote] Inline mermaid skipped:', err);
+      }
+
       if (isExtension) {
         // 插件版：Blob + chrome.downloads.download
-        const blob = new Blob([html], { type: 'text/html' });
+        const blob = new Blob([finalHtml], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
         if (typeof chrome !== 'undefined' && chrome.downloads) {
           await chrome.downloads.download({
@@ -96,7 +106,7 @@ export default function Toolbar({ onSave, hasFile = false, isDirty = false, onAb
       } else {
         // 桌面版：save_dialog + write_file
         const { saveDialog } = await import('../lib/platform');
-        const result = await saveDialog(html, { suggestedName: 'document.html' });
+        const result = await saveDialog(finalHtml, { suggestedName: 'document.html' });
         if (result) {
           showToast('HTML exported!', 'success');
         }

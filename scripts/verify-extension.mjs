@@ -18,11 +18,29 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { resolve, join } from 'path';
 
 const ROOT = resolve(import.meta.dirname, '..');
-const DIST = resolve(ROOT, 'dist-extension');
+// 产物目录：默认 `dist-extension`；可用 `node scripts/verify-extension.mjs <dir>` 显式覆盖。
+// 覆盖能力的存在理由：让「权限门禁」这类校验能用 /tmp 里的**篡改副本**做判别力自检，
+// 无需污染真产物（见下方 ALLOWED_PERMISSIONS）。
+const DIST = process.argv[2] ? resolve(process.argv[2]) : resolve(ROOT, 'dist-extension');
 
 let passed = 0;
 let failed = 0;
 const failures = [];
+
+/**
+ * 允许的 `permissions` 白名单 —— 清单之外一律判失败。
+ *
+ * ⚠️ 这不是「随便列几个」，每一项都必须有**代码事实**支撑：
+ * - `storage` / `downloads` / `contextMenus`：既有功能（草稿持久化 / 导出 / 右键菜单）
+ * - `tabs`：`src/background.ts:461-466` 读 `tab.url` / `tab.pendingUrl` 判定
+ *   「新标签页到底落在哪」（注释写明是真机实测得出）。缺此权限时这两个字段恒为
+ *   `undefined`，落点判定会**静默失效**；且 `host_permissions` 覆盖不到 `file://`，
+ *   没有替代方案。
+ *
+ * 门禁**保留**：以后有人往 manifest 里塞 `"<all_urls>"` / `"webRequest"` 等清单外权限，
+ * 这里仍会拦下（本清单是「只允许这些」，不是「只禁止 tabs」）。
+ */
+const ALLOWED_PERMISSIONS = ['storage', 'downloads', 'contextMenus', 'tabs'];
 
 /**
  * 检查文件是否存在。
@@ -112,15 +130,18 @@ function checkManifest() {
       allPresent = false;
     }
 
-    // 检查 permissions 不含 tabs
-    if (manifest.permissions && manifest.permissions.includes('tabs')) {
-      console.log(`  ❌ manifest.json: permissions should NOT include "tabs"`);
-      failures.push('permissions includes "tabs"');
+    // 权限门禁：只允许白名单内的权限，白名单外一律拒绝（含 <all_urls> 这类宽权限）
+    const permissions = Array.isArray(manifest.permissions) ? manifest.permissions : [];
+    const unexpected = permissions.filter((p) => !ALLOWED_PERMISSIONS.includes(p));
+    if (unexpected.length > 0) {
+      console.log(`  ❌ manifest.json: permissions 含白名单外的项: ${unexpected.join(', ')}`);
+      console.log(`     （允许清单：${ALLOWED_PERMISSIONS.join(', ')}）`);
+      failures.push(`permissions 越界: ${unexpected.join(', ')}`);
       allPresent = false;
     }
 
     if (allPresent) {
-      console.log(`  ✅ manifest.json: all required fields present (MV3, no tabs)`);
+      console.log(`  ✅ manifest.json: all required fields present (MV3, permissions 在白名单内)`);
       passed++;
     } else {
       failed++;

@@ -2,6 +2,10 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 import { existsSync, copyFileSync } from 'fs';
+// 共享插件工厂（唯一来源）：mermaidTrim + dompurifyIsolate 都从这里引入。
+// ⚠️ 所有 vite 配置（产品 + 探针）必须走这里，否则 dompurify 去重坑会再次静默复现。
+// 详见 scripts/vite-plugins.mjs 顶部说明。
+import { mermaidTrim, dompurifyIsolate } from './scripts/vite-plugins.mjs';
 
 /**
  * Inline Vite plugin: copy root-level static files to extension output.
@@ -31,7 +35,10 @@ export default defineConfig(({ mode }) => {
 
   // Shared config (both desktop and extension)
   const commonConfig = {
-    plugins: [react()],
+    // mermaidTrim：构建期剔除 mermaid 罕用图 chunk（TB-02 方案 A）。
+    // 必须放在 react() 之前（插件内 enforce:'pre' 已保证顺序，这里只为可读性）。
+    // 两端都生效：桌面与插件都需要 mermaid。
+    plugins: [mermaidTrim(), dompurifyIsolate(), react()],
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src'),

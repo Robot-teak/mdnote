@@ -18,6 +18,9 @@
   --preview-font-size: 14px;
   --preview-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* R4：预览行号 gutter 预留宽度（尺寸变量，em 随 --preview-font-size 伸缩）。
+     2026-09-19 team-lead 打磨：数字改为继承块字号后，3.6em 显得「离边太远」→ 收到 2.6em。 */
+  --preview-gutter-width: 2.6em;
 
   /* Backgrounds */
   --mf-bg-primary: #ffffff;
@@ -688,115 +691,6 @@ html, body, #root {
   background: var(--mf-bg-primary);
 }
 
-.welcome-recent {
-  padding: 0 12px;
-  margin-bottom: 24px;
-}
-
-.welcome-recent-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.welcome-recent-header h3 {
-  margin: 0;
-  font-size: 14px;
-  color: var(--mf-text-secondary);
-}
-
-.recent-clear-btn {
-  font-size: 12px;
-  padding: 2px 8px;
-  border: 1px solid var(--mf-border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--mf-text-muted);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.recent-clear-btn:hover {
-  color: var(--mf-accent);
-  border-color: var(--mf-accent);
-}
-
-.recent-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  text-align: left;
-}
-
-.recent-list li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  min-width: 0;
-}
-
-.recent-file-btn {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  border: 1px solid var(--mf-border);
-  border-radius: 8px;
-  background: var(--mf-bg-secondary);
-  color: var(--mf-text-primary);
-  cursor: pointer;
-  font-size: 14px;
-  transition: border-color 0.15s ease;
-}
-
-.recent-file-btn:hover {
-  border-color: var(--mf-accent);
-}
-
-.recent-file-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.recent-file-time {
-  font-size: 12px;
-  color: var(--mf-text-muted);
-  margin-left: 8px;
-  flex-shrink: 0;
-}
-
-.recent-remove-btn {
-  width: 24px;
-  height: 24px;
-  flex-shrink: 0;
-  border: none;
-  background: transparent;
-  color: var(--mf-text-muted);
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: all 0.15s ease;
-}
-
-.recent-remove-btn:hover {
-  color: #e5484d;
-  background: var(--mf-bg-hover);
-}
-
-.recent-empty {
-  padding: 16px 12px;
-  color: var(--mf-text-muted);
-  font-size: 13px;
-  text-align: center;
-}
-
 .welcome-content {
   text-align: center;
   max-width: 480px;
@@ -1126,6 +1020,273 @@ html, body, #root {
   transform: translateY(1px);
 }
 
+/* ─── 预览代码块复制按钮（C3） ───
+   包裹层 `.preview-codeblock` 与按钮由 src/lib/preview-enhance.ts 渲染后插入
+   （预览 DOM 每次重渲染都会重建，按钮不能走 JSX）。
+   按钮默认隐藏，hover / 键盘聚焦 / 反馈态时才显形。 */
+/* ⚠️ 追加 2（2026-09-20 第三轮反馈）：**容器框必须画在包裹层上**，不能只画在 <pre> 上。
+   此前边框 / 背景 / 圆角全由内部的 `.preview-pane pre` 提供，而标题行是包裹层的
+   首子元素 → 视觉上「标题行飘在代码块外面」，和 mermaid 容器（自带框、标题行在框内）
+   两套观感。现在把框**上移到包裹层**，<pre> 退回成纯内容区（去边框 / 去背景 / 去圆角），
+   两类块的结构与观感对齐。 */
+.preview-codeblock {
+  position: relative;
+  margin: 1em 0;
+  padding: 8px;
+  border: 1px solid var(--mf-border);
+  border-radius: 8px;
+  background: var(--mf-bg-secondary);
+}
+
+/* <pre> 只留内容区：框已经在包裹层上，这里再画一遍会变成双边框 */
+.preview-codeblock > pre {
+  margin: 0;
+  padding: 4px 8px 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* ⚠️ **样式只有一处定义**（P2 收口，2026-09-20）：代码块的 `.preview-copy-btn` 与
+   mermaid 的 `.preview-mermaid-copy` 共用下列共享选择器列表。
+   class 必须分开（`preview-enhance.handlePreviewClick` 里 C3 的 `.preview-copy-btn`
+   分支排在 mermaid 分支之前并 `return`，复用 class 会让 Diagram 态的 Copy 去抄 `<pre>` 文本），
+   但**外观不能分叉** —— 否则正是用户第 7 条要消灭的「两套样式」，以后必然漂移。
+   值取一套（沿用代码块既有值 11.5px 字号）。
+
+   ⚠️ `height: 20px`（2026-09-21 team-lead 裁定）：原来 24px，把整条标题行撑到 36px；
+   而用户第三轮要的是「高度可以再小一点」，方向反了。24→20 是把条压回 ≤30px 的一环
+   （另外两环：seg-btn 的 padding/line-height、条自身的 padding）。
+   ⛔ **不能用 `display:none` 代替** —— 按钮默认 `visibility:hidden`，hover 才显形；
+   改成 none 会在 hover 瞬间跳版。保留占位、只压尺寸。 */
+.preview-copy-btn,
+.preview-mermaid-copy {
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--mf-border);
+  border-radius: 4px;
+  background: var(--mf-bg-primary);
+  color: var(--mf-text-secondary);
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease, background-color 0.15s ease,
+    color 0.15s ease, border-color 0.15s ease;
+}
+
+/* 显形：hover / 聚焦**容器** —— 这是容器差异（代码块 vs 图表），各容器单独一条，不合并 */
+.preview-codeblock:hover .preview-copy-btn,
+.preview-codeblock:focus-within .preview-copy-btn {
+  opacity: 1;
+  visibility: visible;
+}
+.preview-mermaid:hover .preview-mermaid-copy,
+.preview-mermaid:focus-within .preview-mermaid-copy {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* 显形：键盘聚焦 / 复制成功或失败的反馈态 —— 与容器无关，共享一条 */
+.preview-copy-btn:focus-visible,
+.preview-copy-btn.is-copied,
+.preview-copy-btn.is-failed,
+.preview-mermaid-copy:focus-visible,
+.preview-mermaid-copy.is-copied,
+.preview-mermaid-copy.is-failed {
+  opacity: 1;
+  visibility: visible;
+}
+
+.preview-copy-btn:hover,
+.preview-mermaid-copy:hover {
+  background: var(--mf-bg-hover);
+  color: var(--mf-text-primary);
+}
+
+.preview-copy-btn:active,
+.preview-mermaid-copy:active {
+  background: var(--mf-bg-active);
+}
+
+.preview-copy-btn:focus-visible,
+.preview-mermaid-copy:focus-visible {
+  outline: 2px solid var(--mf-border-focus);
+  outline-offset: 1px;
+}
+
+.preview-copy-btn.is-copied,
+.preview-mermaid-copy.is-copied {
+  color: var(--mf-success);
+  border-color: var(--mf-success);
+}
+
+.preview-copy-btn.is-failed,
+.preview-mermaid-copy.is-failed {
+  color: var(--mf-error);
+  border-color: var(--mf-error);
+}
+
+/* ─── 预览宽表格横向滚动容器（C4） ───
+   包裹层同样由 preview-enhance.ts 渲染后插入；滚动条不单独设样式，
+   继承下方全局 ::-webkit-scrollbar（8px + --mf-scrollbar-thumb），自动跟随明暗主题。 */
+.preview-table-wrap {
+  margin: 0 0 1em;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.preview-table-wrap > table {
+  width: auto;
+  min-width: 100%;
+  margin: 0;
+}
+
+/* ─── 预览块级稀疏行号（R4） ───
+   `data-line-no` 由 src/lib/preview-enhance.ts 的 applyPreviewLineNumbers() 在渲染后写入
+   （= data-source-line + 1，1-based，与编辑器 gutter 同一套编号；data-source-line 本身保持
+   0-based 不动）。数字由**伪元素**画在区块左外侧（right:100%），不在 DOM 里 —— 因此
+   innerHTML 每次重写无需任何额外处理，也不会成为 R2/R3 的 closest/querySelectorAll 候选。
+
+   2026-09-19 team-lead 打磨裁决（真机点测反馈，四条根因均经其核实）：
+   · **字号 / 基线**：原 `font-size:0.8em` + `line-height:inherit` 会算出 1.2em 的行盒
+     （0.8em×1.5），比正文行（1.5em）矮 → 数字相对块首行**上浮**且字号不一致。
+     改为 `font-size:inherit` + `line-height:inherit`，与块首行**同基线**。
+   · **间距**：原 gutter 3.6em「离边太远」、数字 `padding-right:8px`「离内容太近」
+     → gutter 收到 2.6em、右留白加到 16px。
+   · **特殊块也要显示行号**：代码块 / 表格 / mermaid 容器**都显示**
+     （原 A12 第 4 条「代码块不出现行号」及「mermaid 容器不显示」两条裁决作废）。
+
+   ⚠️ 选择器用 **[data-line-no]**（**不再** `:not(pre)`）：`<pre>` 现在也合法带号。
+   嵌套去重仍在 JS 侧完成（preview-enhance.ts 的 shouldSkipLineNumber），
+   故**不需要** `[data-source-line] [data-source-line]::before`。 */
+.preview-pane.show-line-numbers .preview-content {
+  /* .preview-content 此前刻意零 padding；R4 是第一个给它加内边距的功能，
+     且只在开关开启时生效 → 开启后正文整体右移一个 gutter 宽度，这是设计意图 */
+  padding-left: var(--preview-gutter-width, 2.6em);
+}
+
+/* position: relative 只在开关开启、且该元素真的会显示数字时才挂 → 关闭时零开销 */
+.preview-pane.show-line-numbers [data-line-no] {
+  position: relative;
+}
+
+.preview-pane.show-line-numbers [data-line-no]::before {
+  content: attr(data-line-no);
+  /* 画在元素盒子**左外侧**：与 .sync-highlight 的 background-color 闪烁结构上互不干扰，
+     数字不跟着闪也不被高亮底色盖住（UI 规格 §5.3） */
+  position: absolute;
+  right: 100%;
+  top: 0;
+  /* 数字与内容的间距（原来 8px「离内容太近」→ 16px） */
+  padding-right: 16px;
+  font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+  /* 继承块自身字号 / 行高 → 与块首行同基线（原 0.8em 会偏上，见上方说明） */
+  font-size: inherit;
+  line-height: inherit;
+  color: var(--mf-text-muted); /* 亮 #9ca3af / 暗 #6e6e6e */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* 顶部有 padding 的块：数字需下移到与首行同基线。
+   普通块（h1–h6 / p / li / ul / ol / 表格包裹层）顶部 padding 均为 0，走上面的 top:0。 */
+.preview-pane.show-line-numbers blockquote[data-line-no]::before {
+  top: 0.5em; /* .preview-pane blockquote 的 padding-top */
+}
+/* 代码块的行号画在**包裹层**上（不是 <pre>），这样它与 mermaid 容器一样落在
+   标题行那一行的高度上（第三轮反馈：两种块的行号位置要一致）。
+   宿主切换见 preview-enhance.ts 的 enhanceCodeBlocks（锚点复制到包裹层）。 */
+.preview-pane.show-line-numbers .preview-codeblock[data-line-no]::before {
+  top: 8px; /* .preview-codeblock 的 padding-top */
+}
+.preview-pane.show-line-numbers .preview-mermaid[data-line-no]::before {
+  top: 8px; /* .preview-mermaid 的 padding-top */
+}
+/* 表格行号对齐**首个单元格首行文字**（第四轮反馈 #5）。行号宿主是
+   `.preview-table-wrap`（见 enhanceTables：锚点从 <table> 搬到包裹层）。数字盒顶到
+   「首行行盒顶」的距离 = 折叠边框外半 0.5px + th/td `border-top` 1px + `padding-top` 8px = 9.5px。
+   行盒顶对齐 ⇒ 与首行文字的**基线**对齐（探针口径 A「盒顶 vs 文字 top」与口径 B
+   「盒顶 vs 行盒顶」均 ≤1px）。**有 / 无 <thead> 两种表格同一取值**（首格都是 th 或 td，
+   边框+padding 相同）。 */
+.preview-pane.show-line-numbers .preview-table-wrap[data-line-no]::before {
+  top: 9.5px;
+}
+
+/* ⚠️ 有 overflow 的块会裁剪**以自身为包含块的**绝对定位后代 —— 即画在它左外侧的行号。
+   代码块（overflow-x:auto）/ 表格包裹层（overflow-x:auto）/ mermaid 容器（overflow:hidden）
+   三者都会把行号裁掉 → 显示行号时放开 overflow，数字才能画进 gutter。
+   代价：开启行号时宽表格不再单独横向滚动（overflow-x:auto 被覆盖），改由预览区整体横向滚动。
+   关闭行号（默认）时三者 overflow 行为完全不变。 */
+.preview-pane.show-line-numbers .preview-codeblock[data-line-no],
+.preview-pane.show-line-numbers .preview-table-wrap[data-line-no],
+.preview-pane.show-line-numbers .preview-mermaid[data-line-no] {
+  overflow: visible;
+}
+
+/* ─── 预览块顶部类型条（Fix 7 / 追加 1） ───
+   结构由 src/lib/block-chrome.ts 的 createBlockBar() 构建，enhanceCodeBlocks() 插到
+   包裹层**最前**（`<pre>` 之前）；mermaid 容器复用同一条（见 mermaid-preview.ts 的
+   resolveBlockBar，复用而非新建 → `.preview-mermaid` 内恰好一条）。
+
+   ⚠️ 追加 1（2026-09-20 team-lead 裁定）：从**绝对覆盖层**改为**流内一行**。
+   用户原话是「在上面加一行」；且绝对定位 + 固定净空在**双屏窄面板**下会让长类型文案
+   与右侧按钮互压 → 改为正常文档流的一行，`flex-wrap: wrap` 保证窄宽度下自动换行、不叠。 */
+.preview-block-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  /* ⚠️ 第四轮反馈 #1 真因：标题行内容在「块顶 → 底边框」这条**可视标题带**里偏下 4px。
+     不是条内 padding 不对称（条内上/下留白本来相等），而是块包裹层
+     `.preview-codeblock` / `.preview-mermaid` **都有 8px padding-top** —— 它在标题内容
+     上方凭空多出 8px，而下方只有条 padding + 1px 底边框 → 内容整体下坠（探针实测
+     内容中心比标题带中心低 4px，代码块/mermaid 一致）。
+     修法：负 margin 抵消块包裹层的 padding-top，把这段空间还给标题行的**下方**，
+     条自身 padding 上/下之差 = 1px 底边框 → 标题带内精确居中，
+     且条内上/下**视觉**留白相等（探针两条断言均 ≤0.5px）。
+
+     ⚠️ `4px 0 3px`（2026-09-21 收尾 1）：原 `6px 0 5px` + 24px 按钮 + 25.59px seg
+     把条撑到 36 / 37.59px，而用户第三轮要的是「高度可以再小一点」——方向反了。
+     现为 4 上 / 3 下（下侧 + 1px 底边框 = 4）→ **视觉上下对称**，条高压回 ≤30px。
+     ⚠️ `-8px` 与两处块包裹层的 `padding: 8px` 联动；改块 padding 需同步此处。
+     ⛔ `-8px` 不得改动 —— 它与 #1 修好的「内容在标题带内居中」是同一套算法。 */
+  margin-top: -8px;
+  padding: 4px 0 3px;
+  border-bottom: 1px solid var(--mf-border);
+}
+
+.preview-block-kind {
+  font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--mf-text-muted);
+  user-select: none;
+}
+
+.preview-block-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 复制按钮改由操作区流式排布（不再是包裹层右上角的绝对定位）。
+   代码块的 `.preview-copy-btn` 与 mermaid 的 `.preview-mermaid-copy` 同处一条，
+   两者都复位为静态定位。 */
+.preview-block-bar .preview-copy-btn,
+.preview-block-bar .preview-mermaid-copy {
+  position: static;
+  top: auto;
+  right: auto;
+}
+
 /* ===== Custom Scrollbar ===== */
 ::-webkit-scrollbar {
   width: 8px;
@@ -1343,6 +1504,30 @@ html, body, #root {
     overflow: visible !important;
   }
 
+  /* 打印/导出 PDF：表格横向滚动容器展开，避免宽表被裁切（C4） */
+  .preview-table-wrap {
+    overflow-x: visible !important;
+  }
+
+  /* 复制按钮是纯预览交互，不进打印产物（C3）。
+     ⚠️ 两个 class 必须**都列**：代码块是 `.preview-copy-btn`，mermaid 条里的是
+     `.preview-mermaid-copy`（P2 收口：两套外观共享、但 class 刻意不合并）。
+     2026-09-21 补：此前只列了前者 → mermaid 的 Copy 与 [Diagram|Source] 分段控件
+     会跟着进打印 / 导出 PDF。 */
+  .preview-copy-btn,
+  .preview-mermaid-copy,
+  .preview-mermaid-seg {
+    display: none !important;
+  }
+
+  /* 行号是纯预览交互，不进打印 / 导出 PDF（R4 / A12 步骤 7，与导出 HTML 口径一致） */
+  .preview-pane [data-line-no]::before {
+    content: none !important;
+  }
+  .preview-pane.show-line-numbers .preview-content {
+    padding-left: 0 !important;
+  }
+
   body {
     background: white !important;
     color: black !important;
@@ -1361,13 +1546,310 @@ html, body, #root {
   transition: none !important;
 }
 
-/* F1: 编辑→预览同步滚动高亮效果 */
+/* F1: 编辑→预览同步滚动高亮效果
+   C1（v0.5.0）：300ms → 600ms。C5 锚点跳转与批次 B 的编辑侧闪烁统一按 600ms，
+   预览侧的 class 移除时长在 PreviewPane 里同步为 600ms，两处必须一致。 */
 .sync-highlight {
-  animation: sync-flash 300ms ease;
+  animation: sync-flash 600ms ease;
 }
 @keyframes sync-flash {
   0% { background-color: rgba(3, 102, 214, 0.15); }
   100% { background-color: transparent; }
+}
+
+/* C1（v0.5.0）编辑侧行级闪烁：R2「点预览→跳编辑」与 TOC 跳转落点提示。
+   与预览侧 .sync-highlight 共用 sync-flash 关键帧与 600ms 时长，双向视觉一致；
+   时长改动必须同步 EditorPane 的 FLASH_LINE_DURATION_MS。 */
+.cm-flash-line {
+  animation: sync-flash 600ms ease;
+}
+
+[data-theme='dark'] .cm-flash-line,
+.cm-dark .cm-flash-line {
+  animation-name: sync-flash-dark;
+}
+@keyframes sync-flash-dark {
+  0% { background-color: rgba(88, 166, 255, 0.22); }
+  100% { background-color: transparent; }
+}
+
+/* ===== 全局 [hidden] 兜底 =====
+   作者样式里的 `display: flex / inline-flex / grid` 等会**压过** UA 的
+   `[hidden] { display: none }`（同特异性下作者样式优先），使 JS 侧
+   `el.hidden = true` 完全失效。典型受害者：`.preview-mermaid-figure { display: flex }`
+   —— 切到 Source 时图不消失、源码接在图下面（用户真机反馈）。
+   这里一次性用 `!important` 收紧，全仓靠 `hidden` 切视图的地方都受益。
+   已核查：全仓没有任何**故意对抗** `[hidden]` 的规则（唯一的 `.pane.hidden`
+   是 class 选择器，与属性选择器 `[hidden]` 无关）。 */
+[hidden] {
+  display: none !important;
+}
+
+/* ===== R1：mermaid 预览（容器 / 分段控件 / 放大浮层） =====
+   容器的 `<style>` 由 mermaid-preview.scopeMermaidCss 加了作用域前缀，
+   不会污染预览区全局样式。宽度自适应、居中、不溢出。 */
+
+.preview-mermaid {
+  position: relative;
+  margin: 1em 0;
+  padding: 8px;
+  border: 1px solid var(--mf-border);
+  border-radius: 8px;
+  background: var(--mf-bg-secondary);
+  overflow: hidden;
+}
+
+.preview-mermaid-figure {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+}
+
+/* 真机反馈 #2：Source 态不要双框。
+   `findCodeNode()` 返回的是 C3 的包裹层 `.preview-codeblock`（**不是**裸 `<pre>`），
+   整层搬进 `.preview-mermaid` 后：外层容器自带框 + 包裹层自带框 = **双框**。
+   这里在 **mermaid 宿主范围内**把包裹层的框 / 背景 / 圆角 / 外边距 / 内边距复位，
+   只留内容区。
+
+   ⚠️ 为什么选「CSS 复位」而不是「让 findCodeNode 返回内部 <pre>」（另一选项）：
+   后者会让 `unwrapMermaidHosts` 把统一条塞进 `<pre>` 里（它按 codeNode 定位），
+   并把空的 `.preview-codeblock` 空壳留在文档中；锚点还原的目标也会变成 `<pre>`
+   而不是包裹层，与 C3 建的结构不一致。CSS 复位只改观感，不动 DOM 契约，副作用最小。
+   基类 `.preview-codeblock` 不动 → 普通代码块仍保留自己的框。 */
+.preview-mermaid .preview-codeblock {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.preview-mermaid-figure svg {
+  max-width: 100%;
+  height: auto;
+  /* 跟随预览区字体设置（引擎层已按 fontFamily 渲染，这里再兜一层） */
+  font-family: inherit;
+}
+
+/* 分段控件（#5：统一条复用 block-chrome 的 .preview-block-bar，本控件放进它的
+   .preview-block-actions 里，与代码块类型条同一套 bar；不再有独立的 .preview-mermaid-bar） */
+.preview-mermaid-seg {
+  display: inline-flex;
+  border: 1px solid var(--mf-border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--mf-bg-primary);
+  font-size: 11px;
+}
+
+.preview-mermaid-seg-btn {
+  /* ⚠️ `2px 8px` / `line-height: 1.4`（2026-09-21 team-lead 裁定）：原 `3px 10px` + 1.6
+     让 seg 高 25.59px，是整条被撑到 37.59px 的第二环。压到 19.4px 后，条高回到 ≤30px。
+     仍保留 `border: 0` —— 外框由 `.preview-mermaid-seg` 画（1px），这里再画会变双边框。 */
+  padding: 2px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--mf-text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.preview-mermaid-seg-btn + .preview-mermaid-seg-btn {
+  border-left: 1px solid var(--mf-border);
+}
+
+.preview-mermaid-seg-btn:hover {
+  background: var(--mf-bg-tertiary);
+}
+
+.preview-mermaid-seg-btn.is-active {
+  background: var(--mf-accent-light);
+  color: var(--mf-text-primary);
+}
+
+/* #6：统一条的 Copy 按钮（`.preview-mermaid-copy`）**样式只此一处定义** ——
+   见上方 C3 段「.preview-copy-btn, .preview-mermaid-copy」共享选择器列表（P2 收口）。
+   class 必须与 C3 分开（见 mermaid-preview.ts 的 MERMAID_COPY_BTN_CLASS 说明），
+   但外观不分叉；容器触发差异（`.preview-mermaid:hover/:focus-within`）也在那条共享列表里。 */
+
+/* 失败提示：块上方，不遮住源码 */
+.preview-mermaid-error {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(215, 58, 73, 0.1);
+  color: #d73a49;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+[data-theme='dark'] .preview-mermaid-error {
+  color: #ff7b72;
+  background: rgba(255, 123, 114, 0.12);
+}
+
+/* ===== C2：mermaid 放大浮层（最简 overlay，不引第三方 lightbox） ===== */
+
+.preview-mermaid-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-mermaid-zoom-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.preview-mermaid-zoom-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* 第五轮-2 用户规格：弹窗**恒定**铺到视口 90%（上下左右各留 5%），
+     **不再随图形大小变化**（上一轮「面板贴合图形」被实测反馈为
+     「弹窗跟着图形变，感觉奇奇怪怪的」）。JS 也不再写内联 width。 */
+  width: 90vw;
+  height: 90vh;
+  /* 极窄窗口兜底：头部行 5 个按钮实测最少要 ~336px。窗口窄到 90vw 装不下它们时
+     （< ~367px），退让到 98vw —— **最多退到 98%，永远留 1% 外边距**。
+     为什么不让面板撑破视口：撑破后按钮会被切角，且 5% 边距是「点非弹窗区域关闭」
+     的点击区，撑满会让这个出口消失。 */
+  min-width: min(360px, 98vw);
+  min-height: min(200px, 96vh);
+  border-radius: 10px;
+  background: var(--mf-bg-primary);
+  border: 1px solid var(--mf-border);
+  box-shadow: var(--mf-shadow-lg);
+  outline: none;
+}
+
+/* 真机反馈 #3：头部行**永远单行**。
+   标题是 flex 项，默认 `min-width:auto` 且文本可换行 → 窄面板下「Diagram · 125%」
+   会被挤成两行，bar 高度跳变。修法：bar 显式 nowrap；标题 `min-width:0` +
+   nowrap + ellipsis（窄了就截断，不换行）；按钮区 `flex-shrink:0`（不会被挤掉）。 */
+.preview-mermaid-zoom-bar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--mf-border);
+}
+
+.preview-mermaid-zoom-title {
+  /* min-width:0 是 ellipsis 生效的前提（flex 项默认不肯收缩到内容宽度以下） */
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mf-text-primary);
+}
+
+.preview-mermaid-zoom-actions {
+  display: flex;
+  gap: 8px;
+  /* 按钮区不参与收缩：宁可截断标题，也不能把按钮挤出去 */
+  flex-shrink: 0;
+}
+
+.preview-mermaid-zoom-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--mf-border);
+  border-radius: 6px;
+  background: var(--mf-bg-secondary);
+  color: var(--mf-text-primary);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.preview-mermaid-zoom-btn:hover {
+  background: var(--mf-bg-tertiary);
+}
+
+.preview-mermaid-zoom-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.preview-mermaid-zoom-close {
+  padding: 4px 8px;
+}
+
+.preview-mermaid-zoom-body {
+  /* 画布是**绝对定位**、以 body padding-box 左上角为原点 → body 必须是定位基准。
+     ⚠️ padding 归零：留白改由 fit 的 FIT_MARGIN(=0.9) 表达，这样
+     「body 局部坐标 == 画布坐标系原点」不用再补偿 padding，锚点换算只有一条式子。 */
+  position: relative;
+  padding: 0;
+  /* 面板高度已由 `height:90vh` 定死，body 吃掉剩下的一段（bar 之外的全部） */
+  flex: 1 1 auto;
+  min-height: 0;
+  /* ⚠️ overflow 改成 hidden：画布靠 translate 平移，滚动条会与拖动抢事件；
+     且「fit 之后图形一定在 body 内」→ 不需要滚动条；放大后溢出部分由拖动查看。 */
+  overflow: hidden;
+  /* ⚠️ 不再写 `min-height: 40vh`：面板要**贴合图形**（小图不留一片白），
+     固定 40vh 会把内容顶出可视区 —— 真机反馈 6-a/6-d「完整可见」失败的直接原因之一。 */
+  /* 按住拖动平移：默认 grab，拖拽中 grabbing（见 .is-dragging） */
+  cursor: grab;
+  touch-action: none;
+}
+
+.preview-mermaid-zoom-body.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* 缩放 / 平移层：
+   ① 布局尺寸**恒等于图形自然尺寸**（不随 scale 变）——见 MermaidZoomOverlay 文件头；
+   ② 缩放全部交给 transform，`transform-origin: 0 0`，于是
+      「画布局部点 p → body 局部坐标 t + s·p」是唯一几何式，锚点换算直接反解它；
+   ③ 绝对定位 + left/top:0 ⇒ 原点固定在 body 左上角，**不依赖** flex 的
+      `margin:auto` 居中（negative free space 下 auto margin 会退化成 0、把画布
+      甩到左上角，这正是上一轮「从左上角缩放」的根因）。 */
+.preview-mermaid-zoom-canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 显式尺寸必须不被 flex 收缩，否则宽高比会被压变形 */
+  flex: none;
+  transform-origin: 0 0;
+  transition: transform 0.08s ease;
+  will-change: transform;
+}
+
+/* 拖动中禁用过渡，避免"跟手感"延迟 */
+.preview-mermaid-zoom-body.is-dragging .preview-mermaid-zoom-canvas {
+  transition: none;
+}
+
+/* 图形**填满**画布（画布 == 自然尺寸 × transform scale，宽高比天然一致 → 不变形）。
+   四边留白改由 fit 的 FIT_MARGIN(=0.9) 表达（缩放后视觉上仍是各约 5%）。
+   ⚠️ mermaid 会给 <svg> 写**内联** `max-width: <自然宽>px`（以及 width/height 属性），
+   内联样式优先于本样式表 → 不解除的话图形被钉死在自然宽、点 + 也不变大。
+   这里必须 !important 才能把尺寸控制权收回到舞台。 */
+.preview-mermaid-zoom-canvas svg {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+}
+
+/* 打印 / 导出：浮层不出现；容器不要横向滚动 */
+@media print {
+  .preview-mermaid-zoom { display: none !important; }
+  .preview-mermaid-figure { overflow-x: visible !important; }
 }
 
 /* ===== Selection ===== */
@@ -1966,69 +2448,155 @@ html, body, #root {
   background: var(--mf-accent-hover);
 }
 
-/* ─── 草稿恢复提示条（#3） ─── */
-.draft-recovery-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  margin: 8px 16px 0;
-  border: 1px solid var(--mf-border, #d0d7de);
+/* ─── 首页未存档草稿表格列表（R6） ───
+   插件版欢迎卡片内部：三列（Name / Last updated / Actions），
+   容器封顶 220px 内部滚动；无草稿时整块不渲染。 */
+.draft-list {
+  margin: 0 -16px 20px;
+  padding: 12px 14px 10px;
+  background: var(--mf-bg-primary);
+  border: 1px solid var(--mf-border);
   border-radius: 8px;
-  background: var(--mf-bg-secondary, #f6f8fa);
-  font-size: 13px;
-  line-height: 1.4;
-  flex-wrap: wrap;
+  text-align: left;
 }
 
-.draft-recovery-icon {
-  font-size: 15px;
-}
-
-.draft-recovery-text {
-  flex: 1;
-  min-width: 200px;
-}
-
-.draft-recovery-time {
-  color: var(--mf-text-secondary, #666);
-  margin-left: 4px;
-}
-
-.draft-recovery-hint {
-  display: block;
-  color: var(--mf-text-secondary, #888);
+.draft-list-title {
+  margin: 0 0 8px;
   font-size: 12px;
-  margin-top: 2px;
+  font-weight: 600;
+  color: var(--mf-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.draft-recovery-actions {
-  display: flex;
-  gap: 8px;
+.draft-table-wrap {
+  max-height: 220px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
-.draft-recovery-btn {
-  height: 28px;
-  padding: 0 14px;
-  border: 1px solid var(--mf-border, #d0d7de);
+.draft-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.draft-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--mf-bg-secondary);
+  padding: 6px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--mf-text-muted);
+  text-align: left;
+  border-bottom: 1px solid var(--mf-border);
+}
+
+.draft-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--mf-border) 60%, transparent);
+  vertical-align: middle;
+  text-align: left;
+  color: var(--mf-text-primary);
+}
+
+.draft-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.draft-table tbody tr:hover {
+  background: var(--mf-bg-hover);
+}
+
+.draft-cell-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draft-cell-time {
+  width: 128px;
+  font-size: 12px;
+  color: var(--mf-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.draft-cell-actions {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.draft-btn {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--mf-border);
   border-radius: 6px;
   background: transparent;
-  color: var(--mf-text, #222);
+  color: var(--mf-text-secondary);
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-.draft-recovery-btn:hover {
-  background: var(--mf-bg-hover, #eaeef2);
+.draft-btn + .draft-btn {
+  margin-left: 6px;
 }
 
-.draft-recovery-btn.primary {
-  background: var(--mf-accent, #2563eb);
-  border-color: var(--mf-accent, #2563eb);
+.draft-btn:hover {
+  color: var(--mf-error);
+  border-color: var(--mf-error);
+  background: var(--mf-bg-hover);
+}
+
+.draft-btn:active {
+  background: var(--mf-bg-active);
+}
+
+.draft-btn:focus-visible {
+  outline: 2px solid var(--mf-border-focus);
+  outline-offset: 1px;
+}
+
+.draft-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.draft-btn.primary {
+  background: var(--mf-accent);
+  border-color: var(--mf-accent);
   color: #fff;
 }
 
-.draft-recovery-btn.primary:hover {
-  background: var(--mf-accent-hover, #1d4ed8);
+.draft-btn.primary:hover {
+  background: var(--mf-accent-hover);
+  border-color: var(--mf-accent-hover);
+  color: #fff;
 }
+
+.draft-btn.primary:active {
+  background: var(--mf-accent-hover);
+}
+
+.draft-list-note {
+  margin: 8px 2px 0;
+  font-size: 11px;
+  color: var(--mf-text-muted);
+}
+
+/* 极窄视口：隐藏 Last updated 列，把宽度让给 Name */
+@media (max-width: 420px) {
+  .draft-table th:nth-child(2),
+  .draft-table td:nth-child(2) {
+    display: none;
+  }
+}
+

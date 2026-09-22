@@ -36,6 +36,10 @@ Both share the same core editing engine (CodeMirror 6 + markdown-it + highlight.
 - 👁️ **Live Preview** — Real-time markdown-it rendering with highlight.js code blocks
 - 🔀 **3 View Modes** — Editor only / Split / Preview only
 - 🌳 **TOC Sidebar** — Auto-extracted heading outline with hierarchical tree view
+- 📊 **Mermaid Diagrams** — Lazy-loaded rendering of 11 diagram types, with a per-block Diagram/Source toggle; click a diagram to zoom in, download it as SVG, or jump to its source lines
+- 🎯 **Click-to-Source** — Click any element in the preview to move the editor cursor to the line that produced it, scroll it into view and flash it
+- 🔢 **Preview Line Numbers** — Optional block-level line numbers in the preview gutter, off by default (Settings → Preview)
+- 📋 **Copy Code Block** — Copy button on every preview code block, including Mermaid blocks switched to Source
 - 🎨 **Light/Dark Themes** — CSS Variables, instant switching
 - 💾 **Auto-Save** — Configurable interval (10s / 30s / 1m / 2m / 3m / 5m, or off)
 - 📂 **File Association** — Open `.md` files directly from Finder ("Open With")
@@ -59,6 +63,7 @@ Both share the same core editing engine (CodeMirror 6 + markdown-it + highlight.
 | Frontend | React 18 + TypeScript |
 | Editor | CodeMirror 6 |
 | Markdown Engine | markdown-it + highlight.js |
+| Diagrams | Mermaid 11 (lazy-loaded) |
 
 ---
 
@@ -71,7 +76,10 @@ Both share the same core editing engine (CodeMirror 6 + markdown-it + highlight.
 - 🚀 **Edit `.md` in Browser** — Open local or web Markdown files in a full-featured editor tab
 - 🔗 **Auto-detect `.md` Files** — Browsing a `.md` file? One click to open in MDnote
 - 💾 **Smart Auto-Save** — Auto-save to disk for opened files, draft recovery for unsaved work
-- 📂 **Recent Files** — Quick access panel for recently opened files
+- 📊 **Mermaid Diagrams** — Lazy-loaded rendering of 11 diagram types, with a per-block Diagram/Source toggle; click a diagram to zoom in, download it as SVG, or jump to its source lines
+- 🎯 **Click-to-Source** — Click any element in the preview to move the editor cursor to the line that produced it, scroll it into view and flash it
+- 🔢 **Preview Line Numbers** — Optional block-level line numbers in the preview gutter, off by default (Settings → Preview)
+- 📋 **Copy Code Block** — Copy button on every preview code block, including Mermaid blocks switched to Source
 - 🔒 **Multi-tab File Lock** — Prevents concurrent write conflicts
 - ⌨️ **Global Shortcut** — `Cmd+Shift+M` (Mac) / `Ctrl+Shift+M` to open editor
 - 📄 **Export HTML / PDF** — One-click export from the toolbar
@@ -94,6 +102,7 @@ Both share the same core editing engine (CodeMirror 6 + markdown-it + highlight.
 | Storage | File System Access API + IndexedDB |
 | Frontend | React 18 + TypeScript |
 | Editor | CodeMirror 6 |
+| Diagrams | Mermaid 11 (lazy-loaded) |
 
 ---
 
@@ -141,8 +150,8 @@ MDnote maintains **two independent version lines**:
 
 | Product | Version | Tag Prefix | Release Example |
 |---------|---------|-----------|-----------------|
-| Desktop | 0.4.x | `desktop-v*` | `desktop-v0.4.2` |
-| Chrome Extension | 0.2.x | `extension-v*` | `extension-v0.2.1` |
+| Desktop | 0.5.x | `desktop-v*` | `desktop-v0.5.0` |
+| Chrome Extension | 0.3.x | `extension-v*` | `extension-v0.3.0` |
 
 Shared code changes flow to both products automatically. Each product is released independently — a desktop release does not force an extension release and vice versa.
 
@@ -155,7 +164,7 @@ Shared code changes flow to both products automatically. Each product is release
 | `Cmd+Option+1/2/3` | Editor Only / Split / Preview Only |
 | `Cmd+Shift+T` | Toggle Light/Dark theme |
 | `Cmd+S` | Save / Save As |
-| `Cmd+O` | Open file |
+| `Cmd+Shift+O` | Open file |
 | `Cmd+\` | Toggle TOC sidebar |
 | `Cmd+Shift+H` | Export as HTML |
 | `Cmd+Shift+P` | Print / Export as PDF |

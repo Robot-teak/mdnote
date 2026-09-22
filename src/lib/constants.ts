@@ -107,6 +107,22 @@ export const PREVIEW_DEBOUNCE = 150;
 /** Max lines for TOC extraction safety limit */
 export const TOC_MAX_ITEMS = 10_000;
 
+/**
+ * R3「编辑→预览定位精度」两档策略的判定阈值（PRD §3.1 / §3.3，决策 D1）。
+ *
+ * 判定维度是**源码字节数**（不是渲染后 HTML 大小、也不是行数）：
+ * 渲染前即已知（worker 内可判），且与行数强相关；用渲染后大小会让
+ * 同一文档在两档之间抖动。
+ *
+ * - 源码 ≤ 256KB → **B 增强档**：打行级 span 锚点（`data-line-row`），像素级精确
+ * - 源码 >  256KB → **A 基线档**：只打块属性（`data-source-line` / `data-source-line-end`），
+ *   块内按行比例插值定位，**零 DOM 膨胀**（20MB 文档必须走这档）
+ *
+ * 256KB ≈ 4,000–6,000 行 Markdown（平均行长 40–60 字符）。
+ * 每次渲染重新判定，跨阈值自动切换，用户无感知、无需配置（PRD §3.3）。
+ */
+export const LINE_ANCHOR_MAX_SOURCE_BYTES = 256 * 1024;
+
 /** Virtual scroll overscan buffer (items above/below viewport) */
 export const VIRTUAL_SCROLL_OVERSCAN = 5;
 

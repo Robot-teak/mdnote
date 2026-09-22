@@ -1,6 +1,6 @@
-import { useRef, useEffect } from 'react';
-import { EditorState, Compartment } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection, dropCursor, highlightActiveLine, highlightSpecialChars } from '@codemirror/view';
+import { useRef, useEffect, useCallback } from 'react';
+import { EditorState, Compartment, StateEffect, StateField } from '@codemirror/state';
+import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection, dropCursor, highlightActiveLine, highlightSpecialChars, Decoration, DecorationSet } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab, selectAll } from '@codemirror/commands';
 import { syntaxHighlighting, defaultHighlightStyle, indentOnInput, bracketMatching, foldGutter, foldKeymap, indentUnit } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
@@ -12,6 +12,11 @@ import { useAppStore } from '../store/useAppStore';
 import { isExtension } from '../lib/platform';
 import { readClipboard, writeClipboard } from '../lib/platform';
 import { revokeBlobUrl } from '../lib/fileSystem';
+import {
+  consumePendingEditorLine,
+  markEditorLineHandled,
+  requestPreviewScrollToLine,
+} from '../lib/nav-bridge';
 
 // 模块级 Blob URL 跟踪（供 imageCompletionSource 和组件 cleanup 共享）
 const trackedBlobUrls = new Set<string>();
@@ -28,6 +33,46 @@ function revokeAllBlobUrls(): void {
   trackedBlobUrls.forEach((url) => revokeBlobUrl(url));
   trackedBlobUrls.clear();
 }
+
+// ─── C1：编辑侧行级闪烁（与预览侧 `.sync-highlight` 同一时长） ───
+
+/**
+ * 闪烁时长（ms）。必须与 globals.css 的 `.cm-flash-line` 动画时长、
+ * 以及预览侧 `.sync-highlight` / `preview-enhance.FLASH_DURATION_MS` 一致。
+ */
+const FLASH_LINE_DURATION_MS = 600;
+
+/**
+ * 设置/清除闪烁行。值为 **0-based** 行号，`null` 表示清除。
+ */
+const setFlashLineEffect = StateEffect.define<number | null>();
+
+/** 行级闪烁装饰：class 落在 `.cm-line` 上，CSS 见 globals.css「C1 编辑侧行级闪烁」 */
+const flashLineDecoration = Decoration.line({ class: 'cm-flash-line' });
+
+/**
+ * 闪烁行装饰。存 `DecorationSet` 而非行号，是为了能拿到 `tr.doc` 把行号换算成
+ * 位置（`EditorView.decorations.from` 的 getter 只给到字段值，拿不到 state）。
+ *
+ * 文档变化时会按 changes 重映射；一旦编辑内容变了，闪烁就没意义了，直接清掉。
+ */
+const flashLineField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decorations: DecorationSet, tr): DecorationSet {
+    let next = decorations.map(tr.changes);
+    for (const effect of tr.effects) {
+      if (!effect.is(setFlashLineEffect)) continue;
+      const line = effect.value;
+      if (line === null) return Decoration.none;
+      const total = tr.state.doc.lines;
+      const lineNumber = Math.min(Math.max(line + 1, 1), total);
+      const from = tr.state.doc.line(lineNumber).from;
+      next = Decoration.set([flashLineDecoration.range(from)]);
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
 
 // ─── F1: `[` 自动补全链接格式 ───
 
@@ -534,6 +579,8 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
   const autocompleteCompartment = useRef(new Compartment());
 
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // C1：行级闪烁的收尾 timer（连续跳转时清掉上一次）
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pointerScrollFixRef = useRef<{ view: EditorView; cleanup: () => void } | null>(null);
 
   // Initialize editor once
@@ -546,6 +593,8 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
     // applySettingsToCSS handled globally in App.tsx
 
     const extensions = [
+      // C1：编辑侧行级闪烁（R2 跳过来 / 独占模式补跳时闪 600ms）
+      flashLineField,
       // F6: 行号 Compartment
       lineNumbersCompartment.current.of(currentSettings.showLineNumbers ? lineNumbers() : []),
       highlightActiveLineGutter(),
@@ -644,12 +693,16 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
       // 鼠标事件处理（用于同步预览 + Bug 7 修复右键选中整行问题）
       EditorView.domEventHandlers({
         click(_event: MouseEvent, view: EditorView) {
-          if (useAppStore.getState().viewMode !== 'split') return false;
+          // 仅预览模式编辑区不存在，直接跳过（原来只对 split 生效，
+          // 导致「仅编辑」模式下点过的行无处记录，切回分屏时预览停在顶部）
+          if (useAppStore.getState().viewMode === 'preview') return false;
           const line = view.state.doc.lineAt(view.state.selection.main.head).number;
           const line0 = line - 1;
           if (syncTimer.current) clearTimeout(syncTimer.current);
           syncTimer.current = setTimeout(() => {
-            window.dispatchEvent(new CustomEvent('editor:scroll-preview', { detail: { line: line0 } }));
+            // 走桥：分屏时预览直接滚到该行；仅编辑模式记 pending，
+            // 等 PreviewPane 挂载后自己来取（独占模式补偿）
+            requestPreviewScrollToLine(line0);
           }, 100);
           return false;
         },
@@ -850,25 +903,63 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
     });
   }, [settings]);
 
-  // Listen for TOC click events → scroll to line
+  // Listen for `editor:goto-line`（TOC 点击 / R2 预览跳编辑）→ 跳到源行并闪一下
+  //
+  // C1：跳转后给目标行套 `.cm-flash-line`（600ms），与预览侧 `.sync-highlight`
+  // 同一时长、同一条 keyframes，双向跳跃的视觉反馈一致。
+  const gotoLine = useCallback((line: number) => {
+    const view = viewRef.current;
+    if (!view || !Number.isFinite(line)) return;
+
+    // 入参是 0-based，doc.line 是 1-based；越界夹到首/末行，不抛异常
+    const total = view.state.doc.lines;
+    const lineNumber = Math.min(Math.max(Math.trunc(line) + 1, 1), total);
+    const pos = view.state.doc.line(lineNumber).from;
+
+    view.dispatch({
+      selection: { anchor: pos },
+      effects: [
+        EditorView.scrollIntoView(pos, { y: 'center' }),
+        setFlashLineEffect.of(lineNumber - 1),
+      ],
+    });
+
+    // 连续跳转：清掉上一次的收尾 timer，否则前一次会提前把后一次的闪烁掐掉
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = setTimeout(() => {
+      const current = viewRef.current;
+      if (current) {
+        current.dispatch({ effects: setFlashLineEffect.of(null) });
+      }
+      flashTimerRef.current = null;
+    }, FLASH_LINE_DURATION_MS);
+
+    view.focus();
+  }, []);
+
   useEffect(() => {
     const handler = (e: Event) => {
-      const view = viewRef.current;
       const detail = (e as CustomEvent<{ line: number }>).detail;
       const line = detail?.line;
-      if (typeof line !== 'number' || !view) return;
+      if (typeof line !== 'number') return;
 
-      const pos = view.state.doc.line(line + 1).from;
-      view.dispatch({
-        selection: { anchor: pos },
-        effects: EditorView.scrollIntoView(pos, { y: 'center' }),
-      });
-      view.focus();
+      // 编辑器已挂载 → 事件此刻就被消费，清掉 pending，
+      // 防止「切回分屏时又跳一次陈旧行号」
+      markEditorLineHandled();
+      gotoLine(line);
     };
 
     window.addEventListener('editor:goto-line', handler);
     return () => window.removeEventListener('editor:goto-line', handler);
-  }, []);
+  }, [gotoLine]);
+
+  // 独占模式 pending（R2）：预览在「仅预览」模式下点过的行，
+  // 切回分屏 / 仅编辑时在这里补跳一次（pending 只活在内存里，不持久化）。
+  useEffect(() => {
+    const pending = consumePendingEditorLine();
+    if (pending === null) return;
+    gotoLine(pending);
+  }, [gotoLine]);
 
   // F3: 查找与替换事件处理
   useEffect(() => {
@@ -1127,6 +1218,14 @@ export default function EditorPane({ onContentChange }: EditorPaneProps) {
   useEffect(() => {
     onContentChange(content);
   }, [content, onContentChange]);
+
+  // 卸载时收尾：清掉闪烁 timer，避免对已销毁的 view dispatch
+  useEffect(() => () => {
+    if (flashTimerRef.current) {
+      clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = null;
+    }
+  }, []);
 
   return <div ref={containerRef} className="editor-pane" />;
 }

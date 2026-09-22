@@ -135,12 +135,11 @@ export function useFileOps() {
         // 插件版：生成 draftId 并保存到 IndexedDB
         if (isExtension && file.handle) {
           const { generateFileId } = await import('../lib/platform');
-          const { saveHandle, addRecent } = await import('../lib/indexeddb');
+          const { saveHandle } = await import('../lib/indexeddb');
           const draftId = generateFileId(file.path);
           setDraftId(draftId);
           // 存储句柄到 IndexedDB（结构化克隆）
           saveHandle(draftId, file.handle as FileSystemFileHandle, file.name).catch(() => {});
-          addRecent(draftId, file.name, true, file.content.length).catch(() => {});
 
           // S19 文件锁：尝试获取写锁
           const lockAcquired = await acquireFileLock(draftId);
@@ -248,11 +247,11 @@ export function useFileOps() {
   }, [setContent, setFilePath, setFileHandle, setDraftId, setDirty, setSaveState, setHtmlPreview, setIsPreviewLoading, setTocItems, showToast]);
 
   /**
-   * 通过内容打开文件（插件版拖拽 / chrome.runtime.onMessage / 浏览器 .md 接管 / 最近文件恢复）。
+   * 通过内容打开文件（插件版拖拽 / chrome.runtime.onMessage / 浏览器 .md 接管 / 草稿恢复）。
    * @param content 文件内容
    * @param name 文件名
    * @param path 可选完整路径（浏览器打开的 file:// 等），用于左下角路径显示
-   * @param handle 可选磁盘句柄（最近文件恢复时绑定，保存可直接写回原文件）
+   * @param handle 可选磁盘句柄（草稿恢复时绑定，保存可直接写回原文件）
    */
   const openFileByContent = useCallback(async (content: string, name: string, path?: string, handle?: unknown) => {
     try {
@@ -274,14 +273,6 @@ export function useFileOps() {
       setFileHandle(handle ?? null);
       setDirty(false);
       setSaveState('disk-saved');
-
-      // 插件版：记录到最近文件（#3：拖拽/草稿恢复打开的文件也要能在最近列表找回）
-      if (isExtension) {
-        const { generateFileId } = await import('../lib/platform');
-        const { addRecent } = await import('../lib/indexeddb');
-        const draftId = generateFileId(path ?? name);
-        addRecent(draftId, name, !!handle, content.length).catch(() => {});
-      }
 
       const { setViewMode } = useAppStore.getState();
       setViewMode('preview');
@@ -390,12 +381,11 @@ export function useFileOps() {
       // 插件版：保存句柄到 IndexedDB
       if (isExtension && result.handle) {
         const { generateFileId } = await import('../lib/platform');
-        const { saveHandle, addRecent, deleteDraft, deleteHandle } = await import('../lib/indexeddb');
+        const { saveHandle, deleteDraft, deleteHandle } = await import('../lib/indexeddb');
         const oldDraftId = useAppStore.getState().draftId;
         const draftId = oldDraftId || generateFileId(result.path);
         setDraftId(draftId);
         saveHandle(draftId, result.handle as FileSystemFileHandle, result.name).catch(() => {});
-        addRecent(draftId, result.name, true, useAppStore.getState().content.length).catch(() => {});
         // 保存成功后清理旧草稿（如新建 Untitled 文档的临时草稿，#3 用户要求）
         if (oldDraftId && oldDraftId !== draftId) {
           deleteDraft(oldDraftId).catch(() => {});

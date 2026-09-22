@@ -20,7 +20,6 @@ import { isExtension } from './platform';
 /** 消息类型常量 */
 export const MessageType = {
   DIRTY_CHANGE: 'dirty-change',
-  RECENT_UPDATE: 'recent-update',
   OPEN_FILE: 'open-file',
   GET_STATE: 'get-state',
   FILE_LOCK_ACQUIRE: 'file-lock-acquire',

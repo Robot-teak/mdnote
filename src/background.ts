@@ -4,7 +4,7 @@
  * 职责：
  * 1. chrome.action.onClicked — 点击工具栏图标打开编辑器标签页
  * 2. chrome.commands.onCommand — 全局快捷键打开编辑器标签页
- * 3. chrome.runtime.onMessage — 路由标签页间消息（dirty-change / recent-update / open-file）
+ * 3. chrome.runtime.onMessage — 路由标签页间消息（dirty-change / open-file）
  * 4. chrome.contextMenus — 右键菜单声明
  *
  * 设计权衡（Q05）：
@@ -17,7 +17,7 @@
  * 所有状态必须持久化到 chrome.storage，不能依赖 service worker 内存。
  *
  * #4 inline editor（iframe 注入）消息桥接说明：
- * - broadcastToAllTabs 通过 chrome.tabs.sendMessage 广播消息给各标签页的 content script。
+ * - broadcastToOtherTabs 通过 chrome.tabs.sendMessage 广播消息给各标签页的 content script。
  * - 对于 file:// .md 页面：content-md.ts（#1 iframe 注入）接收消息后通过 postMessage
  *   转发给 iframe 内的 App.tsx。
  * - 对于 chrome-extension:// editor.html 页面：无 content script 运行，
@@ -36,7 +36,6 @@ const EDITOR_URL = chrome.runtime.getURL('editor.html');
 /** 消息类型常量（与 messaging.ts 保持一致，N05 批次5 会正式定义） */
 const MessageType = {
   DIRTY_CHANGE: 'dirty-change',
-  RECENT_UPDATE: 'recent-update',
   OPEN_FILE: 'open-file',
   GET_STATE: 'get-state',
   OPEN_EDITOR_TAB: 'open-editor-tab',
@@ -351,7 +350,6 @@ chrome.commands.onCommand.addListener(async (command: string) => {
  *
  * 消息类型：
  * - DIRTY_CHANGE: 编辑器内容变更（dirty 状态同步给其他标签页）
- * - RECENT_UPDATE: 最近文件列表更新（广播给所有标签页）
  * - OPEN_FILE: 请求打开文件（从其他标签页触发）
  * - GET_STATE: 查询当前状态（用于新标签页初始化）
  *
@@ -381,15 +379,6 @@ chrome.runtime.onMessage.addListener(
       case MessageType.DIRTY_CHANGE: {
         // 广播 dirty 状态变更给所有其他标签页
         broadcastToOtherTabs(senderTabId, message);
-        sendResponse({ ok: true });
-        break;
-      }
-
-      case MessageType.RECENT_UPDATE: {
-        // 广播最近文件列表更新给所有标签页。
-        // #4 inline editor: content-md.ts（iframe 注入的 .md 页面）会接收此广播
-        // 并通过 postMessage 转发给 iframe 内的 App.tsx。
-        broadcastToAllTabs(message);
         sendResponse({ ok: true });
         break;
       }
@@ -619,32 +608,6 @@ chrome.contextMenus.onClicked.addListener(async (info: chrome.contextMenus.OnCli
 // ──────────────────────────────────────────────
 // 辅助函数
 // ──────────────────────────────────────────────
-
-/**
- * 向所有标签页广播消息（包括发送者自身）。
- *
- * #4 inline editor 消息桥接：
- * - file:// .md 页面：消息由 content-md.ts 接收，通过 postMessage 转发给
- *   iframe 内的 App.tsx（详见 content-md.ts 的消息桥接代码）。
- * - chrome-extension:// editor.html 页面：无 content script，sendMessage
- *   静默失败（Chrome 不报错）。
- *
- * @param message 消息对象
- */
-async function broadcastToAllTabs(message: unknown): Promise<void> {
-  try {
-    const tabs = await chrome.tabs.query({});
-    for (const tab of tabs) {
-      if (tab.id !== undefined) {
-        chrome.tabs.sendMessage(tab.id, message).catch(() => {
-          // 标签页可能未加载 content script，忽略错误
-        });
-      }
-    }
-  } catch {
-    // tabs.query 需要 tabs 权限，当前未申请时静默降级
-  }
-}
 
 /**
  * 向除发送者外的所有标签页广播消息。

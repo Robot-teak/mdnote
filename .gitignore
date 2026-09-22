@@ -41,6 +41,22 @@ src-tauri/gen/schemas/
 *.log
 npm-debug.log*
 
+# QA harnesses / probes — kept locally as regression assets, NOT published
+qa-*.mjs
+qa-*.html
+qa-*.vite.config.mts
+qa-*.png
+qa-feasibility-probe.mjs
+dist-qa-*/
+open-ext.mjs
+
+# Legacy scratch scripts — kept on disk locally, removed from version control
+test-*.mjs
+repro*.mjs
+verify-fixes.mjs
+/build.rs
+overview.md
+
 # Temporary / scratch files
 team-config.md
 brain/

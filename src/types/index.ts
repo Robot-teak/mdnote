@@ -40,6 +40,26 @@ export interface EditorSettings {
    * 'editor' 表示跟随编辑器字体（v0.2.1 之前的历史行为）。
    */
   previewFontFamily: string;
+
+  // ── v0.5.0 新增（R1 mermaid）──
+
+  /**
+   * 预览区是否渲染 mermaid 图（设置项「Preview > Mermaid Diagrams」），默认 **开**。
+   * 关闭时不加载 mermaid chunk、` ```mermaid ` 块直接渲染为源码块。
+   */
+  mermaidEnabled: boolean;
+
+  /**
+   * 预览区是否显示**块级稀疏行号**（设置项「Preview > Preview Line Numbers」），
+   * 默认 **关**（PRD R4 / 裁决 D4）。
+   *
+   * 块级稀疏 = 每个**块元素**在左侧 gutter 显示其**起始源行号**（1-based，
+   * 与编辑器 gutter 同一套编号）。预览无法像编辑器那样每行连续编号 ——
+   * 一个 30 行代码块只有 1 个块锚点，因此数字必然跳跃（PRD R4「认知对齐」）。
+   *
+   * 关闭时不写 `data-line-no`、样式规则也不生效，**零开销**。
+   */
+  previewLineNumbers: boolean;
 }
 
 /** Default editor settings */
@@ -58,6 +78,10 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   autoSaveInterval: 60_000,
   previewFontSize: 14,
   previewFontFamily: 'system',
+  // R1：默认开启 mermaid 渲染（PRD §1.1）
+  mermaidEnabled: true,
+  // R4：默认关闭预览行号（PRD R4 / 裁决 D4）
+  previewLineNumbers: false,
 };
 
 /** Table of Contents item extracted from Markdown headings */

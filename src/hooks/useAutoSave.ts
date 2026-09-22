@@ -139,7 +139,7 @@ export function useAutoSave() {
       }
 
       // 无路径（新建文档）→ 存临时草稿
-      const { saveDraft, addRecent } = await import('../lib/indexeddb');
+      const { saveDraft } = await import('../lib/indexeddb');
       await saveDraft(draftId, state.content, {
         name: state.fileName,
         hasHandle: !!state.fileHandle,
@@ -148,8 +148,6 @@ export function useAutoSave() {
 
       lastSavedHash.current = contentHash;
       state.setSaveState('draft-saved');
-
-      addRecent(draftId, state.fileName, !!state.fileHandle, state.content.length).catch(() => {});
     } catch (err) {
       console.error('[AutoSave/Draft] Failed:', err);
       // IndexedDB 失败不影响编辑，状态保持 dirty

@@ -4,8 +4,10 @@
  * 验证 IndexedDB 封装的 CRUD 操作：
  * - 草稿保存/获取/列表/删除
  * - 句柄保存/获取/删除
- * - 最近文件添加/列表/清空/淘汰
  * - schema_version 字段
+ *
+ * R5：最近文件（recent store）的 CRUD 与用例已随功能一并移除；
+ * recent object store 本身仍保留（DB_VERSION 维持 v2，见决策 D9）。
  *
  * 使用 fake-indexeddb 模拟 IndexedDB 环境。
  */
@@ -13,11 +15,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import 'fake-indexeddb/auto';
 import {
   DB_NAME,
+  DB_VERSION,
   STORE_DRAFTS,
   STORE_HANDLES,
   STORE_RECENT,
   CURRENT_SCHEMA_VERSION,
-  MAX_RECENT_FILES,
   openDB,
   closeDB,
   saveDraft,
@@ -29,10 +31,6 @@ import {
   getHandle,
   deleteHandle,
   clearAllHandles,
-  addRecent,
-  listRecent,
-  removeRecent,
-  clearRecent,
   getDataSchemaVersion,
   needsMigration,
 } from '../indexeddb';
@@ -71,7 +69,8 @@ describe('indexeddb.ts', () => {
     it('should create database with correct name and version', async () => {
       const db = await openDB();
       expect(db.name).toBe(DB_NAME);
-      expect(db.version).toBe(1);
+      // R5 后 DB_VERSION 仍为 2（决策 D9：不升版本，recent store 保留）
+      expect(db.version).toBe(DB_VERSION);
     });
 
     it('should create all three object stores', async () => {
@@ -220,98 +219,6 @@ describe('indexeddb.ts', () => {
     });
   });
 
-  // ── 最近文件 CRUD ──
-
-  describe('recent files CRUD', () => {
-    it('should add a recent file and list it', async () => {
-      await addRecent('file-1', 'doc.md', true, 1024);
-
-      const recent = await listRecent();
-      expect(recent).toHaveLength(1);
-      expect(recent[0].id).toBe('file-1');
-      expect(recent[0].name).toBe('doc.md');
-      expect(recent[0].hasHandle).toBe(true);
-      expect(recent[0].size).toBe(1024);
-    });
-
-    it('should list recent files sorted by lastAccessed descending', async () => {
-      await addRecent('file-1', 'a.md', false, 100);
-      await new Promise((r) => setTimeout(r, 5));
-      await addRecent('file-2', 'b.md', false, 200);
-      await new Promise((r) => setTimeout(r, 5));
-      await addRecent('file-3', 'c.md', true, 300);
-
-      const recent = await listRecent();
-      expect(recent[0].id).toBe('file-3');
-      expect(recent[1].id).toBe('file-2');
-      expect(recent[2].id).toBe('file-1');
-    });
-
-    it('should update lastAccessed when adding same id', async () => {
-      await addRecent('file-1', 'doc.md', false, 100);
-      await new Promise((r) => setTimeout(r, 10));
-      await addRecent('file-1', 'doc.md', true, 200);
-
-      const recent = await listRecent();
-      expect(recent).toHaveLength(1);
-      expect(recent[0].hasHandle).toBe(true);
-      expect(recent[0].size).toBe(200);
-    });
-
-    it('should limit results when limit parameter is provided', async () => {
-      for (let i = 0; i < 5; i++) {
-        await addRecent(`file-${i}`, `doc${i}.md`, false, 100);
-        await new Promise((r) => setTimeout(r, 5));
-      }
-
-      const recent = await listRecent(3);
-      expect(recent).toHaveLength(3);
-    });
-
-    it('should remove a recent file by id', async () => {
-      await addRecent('file-1', 'doc.md', false, 100);
-      await removeRecent('file-1');
-
-      const recent = await listRecent();
-      expect(recent).toHaveLength(0);
-    });
-
-    it('should clear all recent files', async () => {
-      await addRecent('file-1', 'a.md', false, 100);
-      await addRecent('file-2', 'b.md', false, 200);
-      await clearRecent();
-
-      const recent = await listRecent();
-      expect(recent).toHaveLength(0);
-    });
-
-    it('should trim to MAX_RECENT_FILES when exceeded', async () => {
-      // 添加超过上限的记录
-      for (let i = 0; i < MAX_RECENT_FILES + 5; i++) {
-        await addRecent(`file-${i}`, `doc${i}.md`, false, 100);
-        await new Promise((r) => setTimeout(r, 2));
-      }
-
-      const recent = await listRecent();
-      expect(recent.length).toBeLessThanOrEqual(MAX_RECENT_FILES);
-    });
-
-    it('should store schema_version in recent records', async () => {
-      await addRecent('file-1', 'doc.md', false, 100);
-
-      // 直接查 DB 验证 schema_version
-      const db = await openDB();
-      const tx = db.transaction(STORE_RECENT, 'readonly');
-      const store = tx.objectStore(STORE_RECENT);
-      const record = await new Promise<Record<string, unknown>>((resolve) => {
-        const req = store.get('file-1');
-        req.onsuccess = () => resolve(req.result as Record<string, unknown>);
-        req.onerror = () => resolve({});
-      });
-      expect(record.schema_version).toBe(CURRENT_SCHEMA_VERSION);
-    });
-  });
-
   // ── 迁移支持 ──
 
   describe('migration support', () => {
@@ -341,7 +248,7 @@ describe('indexeddb.ts', () => {
   // ── 综合场景 ──
 
   describe('integration scenarios', () => {
-    it('should handle draft + handle + recent together', async () => {
+    it('should handle draft + handle together', async () => {
       const mockHandle = createMockFileHandle('project.md');
 
       // 保存草稿
@@ -351,35 +258,24 @@ describe('indexeddb.ts', () => {
       // 保存句柄
       await saveHandle('doc-1', mockHandle, 'project.md');
 
-      // 添加到最近
-      await addRecent('doc-1', 'project.md', true, 9);
-
       // 验证全部可读
       const d = await getDraft('doc-1');
       const h = await getHandle('doc-1');
-      const r = await listRecent();
 
       expect(d!.content).toBe('# Project');
       expect(h!.name).toBe('project.md');
-      expect(r).toHaveLength(1);
-      expect(r[0].name).toBe('project.md');
     });
 
     it('should handle clearing all stores independently', async () => {
       await saveDraft('d1', 'content', { name: 'a.md', hasHandle: false });
       await saveHandle('h1', createMockFileHandle('b.md'), 'b.md');
-      await addRecent('r1', 'c.md', false, 100);
 
       await clearAllDrafts();
       expect((await listDrafts())).toHaveLength(0);
       expect((await getHandle('h1'))).not.toBeNull();
-      expect((await listRecent())).toHaveLength(1);
 
       await clearAllHandles();
       expect((await getHandle('h1'))).toBeNull();
-
-      await clearRecent();
-      expect((await listRecent())).toHaveLength(0);
     });
   });
 });

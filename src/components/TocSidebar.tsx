@@ -2,93 +2,27 @@ import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { tocToTree } from '../lib/toc-extractor';
 import type { TocTreeNode } from '../types';
-import type { RecentItem } from '../lib/indexeddb';
 import FindReplace from './FindReplace';
-import RecentFilesPanel from './RecentFilesPanel';
 import { isExtension } from '../lib/platform';
 
 interface TocSidebarProps {
   onHeadingClick?: (line: number) => void;
-  /** 首页最近文件恢复（插件版） */
-  onOpenFile?: () => void;
-  onOpenFileByContent?: (content: string, name: string, path?: string, handle?: unknown) => void;
 }
 
 type SidebarTab = 'toc' | 'find';
 
 /**
  * Sidebar panel with two tabs: Outline (TOC) and Find & Replace.
- * 首页（无打开文件）时：插件版在 Outline 区显示最近文件，并隐藏无意义的 Find 标签。
+ *
+ * R5：最近文件列表已整体移除（原首页插件版的 RecentFilesPanel）。
+ * 首页时插件版不再渲染本侧栏（无目录可展示，避免残留空面板）。
  */
-export default function TocSidebar({ onHeadingClick, onOpenFile, onOpenFileByContent }: TocSidebarProps) {
+export default function TocSidebar({ onHeadingClick }: TocSidebarProps) {
   const { tocItems, tocVisible, setTocVisible, isWelcome } = useAppStore();
   const [activeTab, setActiveTab] = useState<SidebarTab>('toc');
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
 
   const tocTree = useMemo(() => tocToTree(tocItems), [tocItems]);
-
-  // 首页 + 插件版：目录区域改为展示最近文件
-  const isHomeExtension = isWelcome && isExtension;
-
-  // 首页最近文件数据（仅插件版 + 首页需要），由本组件加载与维护
-  const [recentFiles, setRecentFiles] = useState<RecentItem[]>([]);
-  useEffect(() => {
-    if (!isHomeExtension) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { listRecent } = await import('../lib/indexeddb');
-        const files = await listRecent(10);
-        if (!cancelled) setRecentFiles(files);
-      } catch {
-        /* IndexedDB 不可用时静默 */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isHomeExtension]);
-
-  // 点击最近文件：读取草稿内容恢复（绑定磁盘句柄，保存可直接写回）；失败则降级为文件选择器
-  const handleOpenRecent = useCallback(
-    async (file: RecentItem) => {
-      try {
-        const { getDraft, getHandle } = await import('../lib/indexeddb');
-        const draft = await getDraft(file.id);
-        if (draft && draft.content) {
-          // 有句柄则绑定（最近恢复的文件保存时直接写回原文件，不弹另存为）
-          const h = await getHandle(file.id).catch(() => null);
-          const handle = h?.handle ?? null;
-          onOpenFileByContent?.(draft.content, file.name, draft.meta.filePath, handle);
-          return;
-        }
-      } catch {
-        /* 读取草稿失败，降级 */
-      }
-      onOpenFile?.();
-    },
-    [onOpenFile, onOpenFileByContent],
-  );
-
-  const handleClearRecent = useCallback(async () => {
-    try {
-      const { clearRecent } = await import('../lib/indexeddb');
-      await clearRecent();
-      setRecentFiles([]);
-    } catch {
-      /* 静默 */
-    }
-  }, []);
-
-  const handleRemoveRecent = useCallback(async (id: string) => {
-    try {
-      const { removeRecent } = await import('../lib/indexeddb');
-      await removeRecent(id);
-      setRecentFiles((prev) => prev.filter((f) => f.id !== id));
-    } catch {
-      /* 静默 */
-    }
-  }, []);
 
   const toggleCollapse = useCallback((id: string) => {
     setCollapsedIds((prev) => {
@@ -113,8 +47,10 @@ export default function TocSidebar({ onHeadingClick, onOpenFile, onOpenFileByCon
     return null;
   }
 
-  // 首页（无打开文件）且无最近文件时：不显示左侧栏（默认关闭）
-  if (isHomeExtension && recentFiles.length === 0) {
+  // 首页（无打开文件）：插件版不渲染侧栏。
+  // R5 之前这里承载最近文件列表；列表移除后无内容可展示，保持隐藏以免残留空面板。
+  // 桌面版首页行为不变（沿用原有渲染）。
+  if (isWelcome && isExtension) {
     return null;
   }
 
@@ -129,14 +65,12 @@ export default function TocSidebar({ onHeadingClick, onOpenFile, onOpenFileByCon
           >
             Outline
           </button>
-          {!isHomeExtension && (
-            <button
-              className={`find-tab ${activeTab === 'find' ? 'active' : ''}`}
-              onClick={() => setActiveTab('find')}
-            >
-              Find
-            </button>
-          )}
+          <button
+            className={`find-tab ${activeTab === 'find' ? 'active' : ''}`}
+            onClick={() => setActiveTab('find')}
+          >
+            Find
+          </button>
         </div>
         <button
           className="toc-close-btn"
@@ -149,14 +83,7 @@ export default function TocSidebar({ onHeadingClick, onOpenFile, onOpenFileByCon
       </div>
 
       <div className="toc-body">
-        {isHomeExtension ? (
-          <RecentFilesPanel
-            files={recentFiles}
-            onOpen={handleOpenRecent}
-            onClearAll={handleClearRecent}
-            onRemove={handleRemoveRecent}
-          />
-        ) : activeTab === 'toc' ? (
+        {activeTab === 'toc' ? (
           tocTree.length === 0 ? (
             <div className="toc-empty">
               No headings found.

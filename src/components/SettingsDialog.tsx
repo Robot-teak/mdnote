@@ -345,8 +345,40 @@ export default function SettingsDialog({ onClose }: SettingsDialogProps) {
               </div>
             </label>
 
+            {/* R1：Mermaid 渲染开关
+                标签语言裁决（主理人 2026-09-19）：本 tab 其余 13 个 settings-label
+                全是英文，R1 一度写成中文「Mermaid 渲染」，属引入的偏差 → 改回英文
+                `Mermaid Diagrams`（与既有 `Line Numbers` 风格一致）。 */}
+            <label className="settings-row settings-row-checkbox">
+              <span className="settings-label">Mermaid Diagrams</span>
+              <div className="settings-control">
+                <input
+                  type="checkbox"
+                  checked={settings.mermaidEnabled}
+                  onChange={(e) => updateSettings({ mermaidEnabled: e.target.checked })}
+                  className="settings-checkbox"
+                />
+              </div>
+            </label>
+
+            {/* R4：预览块级稀疏行号。⚠️ 与 Behavior tab 的 `Line Numbers`（编辑器行号）
+                是两回事，故按 UI 规格 §8 加 `Preview` 前缀，避免撞名混淆。 */}
+            <label className="settings-row settings-row-checkbox">
+              <span className="settings-label">Preview Line Numbers</span>
+              <div className="settings-control">
+                <input
+                  type="checkbox"
+                  checked={settings.previewLineNumbers}
+                  onChange={(e) => updateSettings({ previewLineNumbers: e.target.checked })}
+                  className="settings-checkbox"
+                />
+              </div>
+            </label>
+
             <p className="settings-note">
               Code blocks and tables scale with the preview font size.
+              Mermaid diagrams render in the preview.
+              Preview line numbers are shown in the preview only — they are not included in exported HTML.
             </p>
           </div>
         )}

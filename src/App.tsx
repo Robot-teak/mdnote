@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore, useHydrated, onHydrated, hydrateFromStorage } from './store/useAppStore';
 import type { EditorSettings } from './types';
 import { PREVIEW_DEBOUNCE, resolvePreviewFontStack } from './lib/constants';
+import { clearPendingLines } from './lib/nav-bridge';
 import './styles/globals.css';
 
 // 安全组件
@@ -22,7 +23,6 @@ import Toolbar from './components/Toolbar';
 import TocSidebar from './components/TocSidebar';
 import PreviewPane from './components/PreviewPane';
 import Onboarding from './components/Onboarding';
-import DraftRecoveryBar from './components/DraftRecoveryBar';
 
 // platform 抽象层
 import {
@@ -233,12 +233,6 @@ function AppInner() {
 
       // 路由处理
       switch (bridged.type) {
-        case 'recent-update':
-          // 触发最近文件列表刷新（TocSidebar / RecentFilesPanel 监听此事件）
-          window.dispatchEvent(
-            new CustomEvent('mdnote:recent-update', { detail: bridged.payload }),
-          );
-          break;
         case 'dirty-change':
           // 多编辑器状态同步（可选，未来可扩展）
           break;
@@ -635,6 +629,18 @@ function AppInner() {
     window.dispatchEvent(new CustomEvent('preview:scroll-to-heading', { detail: { line } }));
   }, []);
 
+  // 换文档（打开别的文件 / 新建文档）→ 清掉两端的 pending 行号。
+  //
+  // pending 记的是「在**旧**文档里点过的行号」。换文档后它已经对不上任何内容，
+  // 若留着，等用户切回分屏把编辑器/预览挂载起来时，会跳到一个与新文档无关的
+  // 陈旧行号（独占模式下的静默误跳）。
+  //
+  // 主题切换 / 视图模式切换**不能清** —— 切视图模式正是要靠 pending 才能把
+  // 跳转补上（A4 / A5）。
+  useEffect(() => {
+    clearPendingLines();
+  }, [filePath]);
+
   // 插件版：hydrate 未完成时显示加载界面
   if (isExtension && !hydrated) {
     return (
@@ -649,12 +655,9 @@ function AppInner() {
       {/* 工具栏 */}
       <Toolbar onSave={handleSave} hasFile={!!filePath} isDirty={isDirty} onAboutOpen={setAboutOpen} onSettingsOpen={setSettingsOpen} />
 
-      {/* 草稿恢复提示条（#3，插件版欢迎页） */}
-      {isExtension && isWelcome && <DraftRecoveryBar />}
-
       <div className="main-area">
         {/* TOC 侧栏 */}
-        <TocSidebar onHeadingClick={handleTocJump} onOpenFile={openFile} onOpenFileByContent={openFileByContent} />
+        <TocSidebar onHeadingClick={handleTocJump} />
 
         {/* 主内容（split 互换用 class 而非内联 style —— 分隔线也要跟着换边） */}
         <main
